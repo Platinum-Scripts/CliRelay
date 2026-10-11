@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/modeldiscovery"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/runtime/executor"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/util"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
@@ -41,6 +42,9 @@ func IsSelfListingProvider(provider string) bool {
 // self-listing provider can call. A failure is reported as an error; a cached
 // list is never returned in its place.
 func DiscoverCredentialModels(ctx context.Context, auth *coreauth.Auth, cfg *config.Config, provider string) ([]*sdkmodelcatalog.ModelInfo, error) {
+	// The proxy a credential names is resolved in its tenant's pool; see
+	// modeldiscovery.CredentialConfig.
+	cfg = modeldiscovery.CredentialConfig(cfg, auth)
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "antigravity":
 		return executor.DiscoverAntigravityModels(ctx, auth, cfg)
