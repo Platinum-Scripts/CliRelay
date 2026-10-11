@@ -22,6 +22,14 @@ const (
 	RouteGroupMetadataKey = "route_group"
 	// RouteFallbackMetadataKey controls whether groupURL requests may fall back to the default scope.
 	RouteFallbackMetadataKey = "route_fallback"
+	// TenantWideSelectionMetadataKey (bool) lets selection consider every
+	// credential of the tenant. Without it a request that names no channel group
+	// is placed in the implicit "default" group, and that group's membership and
+	// model lists apply. That is the right policy for API traffic, but it made
+	// the panel's model and image probes fail for models an operator kept out of
+	// the default group. A route group, allowed channels or a pinned credential
+	// set on the same request still apply.
+	TenantWideSelectionMetadataKey = "tenant_wide_selection"
 	// SelectedAuthMetadataKey stores the auth ID selected by the scheduler.
 	SelectedAuthMetadataKey = "selected_auth_id"
 	// SelectedAuthCallbackMetadataKey carries an optional callback invoked with the selected auth ID.

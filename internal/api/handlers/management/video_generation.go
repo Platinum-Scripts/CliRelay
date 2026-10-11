@@ -254,14 +254,11 @@ func (h *Handler) executeVideoGenerationTestForTenant(ctx context.Context, tenan
 func (h *Handler) executeVideoCall(ctx context.Context, tenantID, provider, model string, payload []byte, alt, pinnedAuthID string) ([]byte, string, error) {
 	var selectedMu sync.Mutex
 	selected := ""
-	meta := map[string]any{
-		coreexecutor.SinglePickMetadataKey: true,
-		coreexecutor.TenantMetadataKey:     coreauth.NormalizedTenantID(tenantID),
-		coreexecutor.SelectedAuthCallbackMetadataKey: func(authID string) {
-			selectedMu.Lock()
-			selected = strings.TrimSpace(authID)
-			selectedMu.Unlock()
-		},
+	meta := probeMetadata(tenantID)
+	meta[coreexecutor.SelectedAuthCallbackMetadataKey] = func(authID string) {
+		selectedMu.Lock()
+		selected = strings.TrimSpace(authID)
+		selectedMu.Unlock()
 	}
 	if pinnedAuthID != "" {
 		meta[coreexecutor.PinnedAuthMetadataKey] = pinnedAuthID
