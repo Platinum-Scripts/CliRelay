@@ -277,10 +277,7 @@ func (h *Handler) executeImageGenerationTestForTenant(ctx context.Context, tenan
 			Alt:             alt,
 			OriginalRequest: payload,
 			SourceFormat:    sdktranslator.FromString("openai"),
-			Metadata: map[string]any{
-				coreexecutor.SinglePickMetadataKey: true,
-				coreexecutor.TenantMetadataKey:     coreauth.NormalizedTenantID(tenantID),
-			},
+			Metadata:        probeMetadata(tenantID),
 		})
 		if execErr != nil {
 			return nil, execErr
