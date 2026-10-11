@@ -186,22 +186,45 @@ func (r geminiImageRequest) generateContentPayload() ([]byte, error) {
 	return json.Marshal(body)
 }
 
-// normalizeGeminiAspectRatio accepts "W:H" (spaces allowed) and reduces it, so
-// "32:18" is sent as the "16:9" upstream knows. Empty and "auto" leave the choice
-// to the model.
+// geminiAspectRatioMaxTerm bounds each side of a W:H ratio. It keeps the
+// cross-multiplication below from overflowing and rejects inputs no ratio needs.
+const geminiAspectRatioMaxTerm = 10000
+
+// normalizeGeminiAspectRatio accepts "W:H" (spaces allowed) and maps it onto the
+// accepted ratio of the same value, so "32:18" is sent as the "16:9" upstream
+// knows. Empty and "auto" leave the choice to the model.
+//
+// The fraction must not simply be reduced: upstream spells one of its ratios
+// "21:9", and reduced to "7:3" it is rejected with INVALID_ARGUMENT — measured on
+// the live relay on 2026-10-11. A ratio with no accepted equivalent is passed
+// through as written for upstream to judge.
 func normalizeGeminiAspectRatio(raw string) (string, error) {
 	value := strings.ReplaceAll(strings.TrimSpace(raw), " ", "")
 	if value == "" || strings.EqualFold(value, "auto") {
 		return "", nil
 	}
+	width, height, ok := parseGeminiAspectRatio(value)
+	if !ok {
+		return "", fmt.Errorf("aspect_ratio must look like 16:9")
+	}
+	for _, accepted := range registry.GeminiImageAspectRatios() {
+		if w, h, okAccepted := parseGeminiAspectRatio(accepted); okAccepted && w*height == h*width {
+			return accepted, nil
+		}
+	}
+	return strconv.Itoa(width) + ":" + strconv.Itoa(height), nil
+}
+
+// parseGeminiAspectRatio splits "W:H" into two positive terms.
+func parseGeminiAspectRatio(value string) (int, int, bool) {
 	left, right, found := strings.Cut(value, ":")
 	width, errWidth := strconv.Atoi(left)
 	height, errHeight := strconv.Atoi(right)
-	if !found || errWidth != nil || errHeight != nil || width <= 0 || height <= 0 {
-		return "", fmt.Errorf("aspect_ratio must look like 16:9")
+	if !found || errWidth != nil || errHeight != nil || width <= 0 || height <= 0 ||
+		width > geminiAspectRatioMaxTerm || height > geminiAspectRatioMaxTerm {
+		return 0, 0, false
 	}
-	divisor := greatestCommonDivisor(width, height)
-	return strconv.Itoa(width/divisor) + ":" + strconv.Itoa(height/divisor), nil
+	return width, height, true
 }
 
 // normalizeGeminiImageSize maps the accepted spellings onto the canonical tier
@@ -229,10 +252,8 @@ func nearestGeminiAspectRatio(width, height int) string {
 	target := math.Log(float64(width) / float64(height))
 	best, bestDistance := "1:1", math.Inf(1)
 	for _, ratio := range registry.GeminiImageAspectRatios() {
-		left, right, _ := strings.Cut(ratio, ":")
-		w, errW := strconv.Atoi(left)
-		h, errH := strconv.Atoi(right)
-		if errW != nil || errH != nil || w <= 0 || h <= 0 {
+		w, h, ok := parseGeminiAspectRatio(ratio)
+		if !ok {
 			continue
 		}
 		if distance := math.Abs(target - math.Log(float64(w)/float64(h))); distance < bestDistance {
@@ -272,13 +293,6 @@ func parseImageSizeDimensions(size string) (int, int, bool) {
 		return 0, 0, false
 	}
 	return width, height, true
-}
-
-func greatestCommonDivisor(a, b int) int {
-	for b != 0 {
-		a, b = b, a%b
-	}
-	return a
 }
 
 // hasGeminiImageMask reports whether an edit request carries a mask in any of the
