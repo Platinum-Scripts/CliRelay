@@ -404,6 +404,11 @@ func (h *Handler) PutConfigYAML(c *gin.Context) {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "invalid_config", "message": err.Error()})
 		return
 	}
+	// Ahead of the routing checks: a database-owned section is rejected
+	// whether or not it is valid, and the operator learns where to edit it.
+	if h.rejectDatabaseOwnedSectionChanges(c, validated, body) {
+		return
+	}
 	var auths []*coreauth.Auth
 	if h != nil && h.authManager != nil {
 		auths = h.authManager.List()

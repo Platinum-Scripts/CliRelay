@@ -41,6 +41,13 @@ func PersistRuntimeSettingsFromYAML(ctx context.Context, cfg *config.Config, yam
 	return runtimeconfigpersist.PersistRuntimeSettingsFromYAML(ctx, cfg, yamlContent)
 }
 
+// DatabaseOwnedSectionsChangedByYAML returns the database-owned sections a
+// config.yaml save would change and must not; see
+// runtimeconfigpersist.DatabaseOwnedSectionsChangedByYAML.
+func DatabaseOwnedSectionsChangedByYAML(ctx context.Context, cfg *config.Config, yamlContent []byte, canonicalizeRouting func(config.RoutingConfig) config.RoutingConfig) ([]usage.DatabaseOwnedSection, error) {
+	return runtimeconfigpersist.DatabaseOwnedSectionsChangedByYAML(ctx, cfg, yamlContent, canonicalizeRouting)
+}
+
 func MigrateRuntimeSettingsFromConfig(cfg *config.Config, configFilePath string) {
 	usage.MigrateRuntimeSettingsFromConfig(cfg, configFilePath)
 }

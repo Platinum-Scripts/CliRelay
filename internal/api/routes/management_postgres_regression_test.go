@@ -87,6 +87,15 @@ func TestManagementAPIPostgresDataStackRegression(t *testing.T) {
 	}`, http.StatusOK)
 	client.expectBodyContains(t, http.MethodGet, "/v0/management/routing-config", "", http.StatusOK, "codex-group")
 
+	// A raw config.yaml save is checked against the sections PostgreSQL now
+	// holds; rejected saves leave the handler as it was for the steps below.
+	client.expectBodyContains(t, http.MethodPut, "/v0/management/config.yaml",
+		"port: 8317\nrouting:\n  strategy: fill-first\nproxy-pool:\n  - id: other-proxy\n    url: http://127.0.0.1:7892\n    enabled: true\n",
+		http.StatusUnprocessableEntity, `"sections":["routing","proxy-pool"]`)
+	client.expectBodyContains(t, http.MethodPut, "/v0/management/config.yaml",
+		"port: 8317\napi-keys:\n  - sk-test-postgres-yaml\napi-key-permission-profiles:\n  - id: yaml-profile\n    name: From YAML\n",
+		http.StatusUnprocessableEntity, `"sections":["api-keys","api-key-permission-profiles"]`)
+
 	client.expectStatus(t, http.MethodPatch, "/v0/management/usage-statistics-enabled", `{"value":false}`, http.StatusOK)
 	client.expectBodyContains(t, http.MethodGet, "/v0/management/usage-statistics-enabled", "", http.StatusOK, "false")
 	client.expectStatus(t, http.MethodPut, "/v0/management/codex-oauth-admission", `{"allowed_clients":["claude_code"]}`, http.StatusOK)
@@ -126,6 +135,26 @@ func TestManagementAPIPostgresDataStackRegression(t *testing.T) {
 	if got := usage.GetAPIKey("sk-test-postgres-route"); got != nil {
 		t.Fatalf("api key still exists after DELETE: %#v", got)
 	}
+
+	// Last, as it replaces the handler's config: copies of the stored routing
+	// and proxy pool go through.
+	client.expectStatus(t, http.MethodPut, "/v0/management/config.yaml", `port: 8317
+routing:
+  strategy: round-robin
+  channel-groups:
+    - name: codex-group
+      match:
+        channels: [codex]
+  path-routes:
+    - path: /route-codex
+      group: codex-group
+      strip-prefix: true
+proxy-pool:
+  - id: local-proxy
+    name: Local Proxy Updated
+    url: http://127.0.0.1:7891
+    enabled: false
+`, http.StatusOK)
 }
 
 func TestManagementAPIPostgresAllRoutesSmoke(t *testing.T) {

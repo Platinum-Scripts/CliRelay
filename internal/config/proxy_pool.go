@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 	"unicode"
 )
@@ -61,6 +62,20 @@ func NormalizeProxyPool(entries []ProxyPoolEntry) []ProxyPoolEntry {
 		return nil
 	}
 	return out
+}
+
+// SameProxyPool reports whether a and b hold the same proxies once both are
+// normalized. Order does not count: entries are resolved by ID, and the store
+// lists them by creation time rather than in the order they were written.
+func SameProxyPool(a, b []ProxyPoolEntry) bool {
+	return slices.Equal(proxyPoolByID(a), proxyPoolByID(b))
+}
+
+func proxyPoolByID(entries []ProxyPoolEntry) []ProxyPoolEntry {
+	// NormalizeProxyPool builds a new slice, so sorting leaves entries alone.
+	normalized := NormalizeProxyPool(entries)
+	slices.SortFunc(normalized, func(x, y ProxyPoolEntry) int { return strings.Compare(x.ID, y.ID) })
+	return normalized
 }
 
 // ProxyPoolDuplicateIDs returns normalized ids that appear more than once among valid entries.

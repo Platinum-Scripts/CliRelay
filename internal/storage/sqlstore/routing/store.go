@@ -51,9 +51,7 @@ func InitTable(db *sql.DB) {
 }
 
 func normalize(input config.RoutingConfig) config.RoutingConfig {
-	holder := &config.Config{Routing: input}
-	holder.SanitizeRouting()
-	return holder.Routing
+	return config.NormalizeRoutingConfig(input)
 }
 
 func meaningful(cfg config.RoutingConfig) bool {

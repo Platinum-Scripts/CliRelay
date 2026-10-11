@@ -1,6 +1,8 @@
 package config
 
 import (
+	"bytes"
+	"encoding/json"
 	"strings"
 
 	internalrouting "github.com/router-for-me/CLIProxyAPI/v6/internal/routing"
@@ -134,6 +136,24 @@ func normalizeOptionalRoutingStrategy(strategy string) string {
 		return ""
 	}
 	return NormalizeRoutingStrategy(strategy)
+}
+
+// NormalizeRoutingConfig returns input as SanitizeRouting leaves it, which is
+// the form the routing store keeps. input itself is not modified.
+func NormalizeRoutingConfig(input RoutingConfig) RoutingConfig {
+	holder := &Config{Routing: input}
+	holder.SanitizeRouting()
+	return holder.Routing
+}
+
+// SameRoutingConfig reports whether a and b are the same routing
+// configuration once both are normalized. Every slice and map of the routing
+// types is omitempty, so the encoding does not tell an absent list from an
+// empty one, and map keys are encoded in order.
+func SameRoutingConfig(a, b RoutingConfig) bool {
+	left, errLeft := json.Marshal(NormalizeRoutingConfig(a))
+	right, errRight := json.Marshal(NormalizeRoutingConfig(b))
+	return errLeft == nil && errRight == nil && bytes.Equal(left, right)
 }
 
 // SanitizeRouting normalizes routing configuration, deduplicating groups and paths.

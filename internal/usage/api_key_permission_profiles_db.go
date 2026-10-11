@@ -1,6 +1,7 @@
 package usage
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"math"
@@ -73,12 +74,12 @@ func MigrateAPIKeyPermissionProfilesFromYAML(configFilePath string) int {
 		return 0
 	}
 
-	var count int64
-	if err := db.QueryRow("SELECT COUNT(*) FROM api_key_permission_profiles").Scan(&count); err != nil {
-		log.Errorf("usage: migration count api_key_permission_profiles: %v", err)
+	stored, err := APIKeyPermissionProfilesStored(context.Background())
+	if err != nil {
+		log.Errorf("usage: migration check api_key_permission_profiles: %v", err)
 		return 0
 	}
-	if count > 0 {
+	if stored {
 		cleanAPIKeyPermissionProfilesFromYAML(configFilePath)
 		return 0
 	}
@@ -106,6 +107,13 @@ func MigrateAPIKeyPermissionProfilesFromYAML(configFilePath string) int {
 	}
 	log.Infof("usage: migrated %d API key permission profile(s) from config to the database", len(profiles))
 	return len(profiles)
+}
+
+// APIKeyPermissionProfilesStored reports whether the database holds a
+// permission profile of any tenant, from which point config.yaml's
+// api-key-permission-profiles are no longer imported.
+func APIKeyPermissionProfilesStored(ctx context.Context) (bool, error) {
+	return sqlapikey.AnyPermissionProfileStored(ctx, getDB())
 }
 
 func cleanAPIKeyPermissionProfilesFromYAML(configFilePath string) {
