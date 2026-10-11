@@ -102,6 +102,9 @@ func (e *AntigravityExecutor) Execute(ctx context.Context, auth *cliproxyauth.Au
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if isGeminiImageAlt(opts.Alt) {
+		return e.executeOpenAIImages(ctx, auth, req, opts)
+	}
 	// Every non-streaming request is served by asking the streaming endpoint and
 	// assembling the result.
 	//
@@ -125,6 +128,11 @@ func (e *AntigravityExecutor) Execute(ctx context.Context, auth *cliproxyauth.Au
 func (e *AntigravityExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (_ *cliproxyexecutor.StreamResult, err error) {
 	if opts.Alt == "responses/compact" {
 		return nil, statusErr{code: http.StatusNotImplemented, msg: "/responses/compact not supported"}
+	}
+	// The images endpoints are answered whole; there is no partial-image stream to
+	// relay, and the alt would otherwise land in the upstream URL.
+	if isGeminiImageAlt(opts.Alt) {
+		return nil, statusErr{code: http.StatusBadRequest, msg: "invalid request: streaming image generation is not supported for Gemini image models"}
 	}
 	if ctx == nil {
 		ctx = context.Background()
