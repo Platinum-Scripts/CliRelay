@@ -366,6 +366,7 @@ GitHub Actions 的 `Deploy CliRelay` 按节点逐台部署：
   - 吊销、删除 API Key 只重建鉴权表，不重建执行器，所以不会打断 Codex 上游 WebSocket 会话。
   - 路由、代理池、价格、模型配置、IP 规则、租户各有自己的重载路径。
 - **原来只存在本机 YAML 的开关迁入数据库**：debug、request-retry、proxy-url 等 14 项，所有节点共用一份。节点本地的设置（端口、TLS、`auth-dir`、`postgres`、`redis`、`cluster`、`trusted-proxies`、`auto-update` 等）仍在各自的 YAML 里。
+- **直接保存 `config.yaml`**：面板 YAML 编辑器提交的内容里写了归数据库管理的设置时，会先在一个事务里把它们写进数据库，再写文件。数据库写入失败则整次保存被拒绝，数据库和 `config.yaml` 都不变：版本冲突返回 409 `config_version_conflict`，其他失败返回 500。
 
 ### 6.4 OAuth 登录与异步任务
 

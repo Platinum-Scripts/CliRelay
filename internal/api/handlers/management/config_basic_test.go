@@ -2,6 +2,10 @@ package management
 
 import (
 	"bytes"
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,7 +16,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/api/bodyutil"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/cluster"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/configsync"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/management/settings/runtimeconfig"
 	settingsstore "github.com/router-for-me/CLIProxyAPI/v6/internal/management/settings/store"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
 )
@@ -464,6 +471,184 @@ logging-to-file: true
 		t.Fatal("config mutation hook was not called")
 	}
 	assertPayloadOverrideRule(t, hookPayload)
+}
+
+// A runtime setting spelled out in a config.yaml save is owned by the
+// database: every later reload applies the stored value and strips the key
+// from config.yaml. The save used to log a failed write of such a key and
+// still answer 200, after which the new value existed nowhere.
+func TestPutConfigYAMLRejectsSaveWhenRuntimeSettingIsNotStored(t *testing.T) {
+	h, configPath, original := newRuntimeSettingYAMLSaveFixture(t)
+	var hookCalls int
+	h.SetConfigMutatedHook(func(*config.Config) { hookCalls++ })
+	// The database refuses the proxy-url row while every read still works, like
+	// a statement failing mid-transaction. request-retry alone would be fine.
+	restore := failRuntimeSettingWrites(t, runtimeconfig.RuntimeSettingProxyURL, errors.New("injected: connection reset while storing proxy-url"))
+	body := []byte("# operator notes\nport: 8319\nrequest-retry: 5\nproxy-url: " + yamlSaveNewProxy + "\n")
+
+	rec := putConfigYAML(h, body)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("PutConfigYAML status = %d body = %s, want 500", rec.Code, rec.Body.String())
+	}
+	// Nothing of the rejected save may stick, or a retry would start from a
+	// half-applied state: not the other key, not the file, not the live config.
+	assertStoredProxyURL(t, yamlSaveOldProxy)
+	if payload, ok := settingsstore.GetRuntimeSettingPayload(runtimeconfig.RuntimeSettingRequestRetry); ok {
+		t.Fatalf("request-retry = %s was stored by a save that failed", payload)
+	}
+	assertFileContent(t, configPath, original)
+	if h.cfg.ProxyURL != yamlSaveOldProxy || h.cfg.RequestRetry != 0 || hookCalls != 0 {
+		t.Fatalf("live config changed by a failed save: proxy-url=%q request-retry=%d hook calls=%d", h.cfg.ProxyURL, h.cfg.RequestRetry, hookCalls)
+	}
+
+	// The operator retries the same YAML once the database takes writes again.
+	restore()
+	rec = putConfigYAML(h, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("retried PutConfigYAML status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	assertStoredProxyURL(t, yamlSaveNewProxy)
+	if h.cfg.ProxyURL != yamlSaveNewProxy || h.cfg.RequestRetry != 5 || h.cfg.Port != 8319 {
+		t.Fatalf("live config after retry: proxy-url=%q request-retry=%d port=%d", h.cfg.ProxyURL, h.cfg.RequestRetry, h.cfg.Port)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if strings.Contains(string(data), "proxy-url") || strings.Contains(string(data), "request-retry") || !strings.Contains(string(data), "port: 8319") {
+		t.Fatalf("config.yaml after the stored save should keep port and drop the stored keys:\n%s", data)
+	}
+}
+
+// A key another writer keeps changing exhausts the retries; that is a version
+// conflict, answered like every other conflicting configuration write.
+func TestPutConfigYAMLAnswersConflictWhenRuntimeSettingKeepsChanging(t *testing.T) {
+	h, configPath, original := newRuntimeSettingYAMLSaveFixture(t)
+	key := runtimeconfig.RuntimeSettingProxyURL
+	failRuntimeSettingWrites(t, key, &configsync.ConflictError{Domain: configsync.RuntimeSettingDomain(key), Key: key, Expected: 1, Current: 2})
+
+	rec := putConfigYAML(h, []byte("# operator notes\nport: 8318\nproxy-url: "+yamlSaveNewProxy+"\n"))
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("PutConfigYAML status = %d body = %s, want 409", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil || resp.Error.Code != "config_version_conflict" {
+		t.Fatalf("conflict body = %s (%v), want code config_version_conflict", rec.Body.String(), err)
+	}
+	assertStoredProxyURL(t, yamlSaveOldProxy)
+	assertFileContent(t, configPath, original)
+	if h.cfg.ProxyURL != yamlSaveOldProxy {
+		t.Fatalf("live proxy-url = %q after a rejected save", h.cfg.ProxyURL)
+	}
+}
+
+// The database took the runtime settings, then config.yaml could not be
+// written. The other nodes apply the stored value from the published event;
+// this node never receives its own event, so it must adopt the value itself
+// instead of serving the old one until some later reload.
+func TestPutConfigYAMLKeepsStoredRuntimeSettingsLiveWhenFileWriteFails(t *testing.T) {
+	h, configPath, _ := newRuntimeSettingYAMLSaveFixture(t)
+	// A directory in config.yaml's place: validation, which writes a temp file
+	// next to it, passes, and only the write of config.yaml itself fails.
+	if err := os.Remove(configPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(configPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var hooked *config.Config
+	h.SetConfigMutatedHook(func(cfg *config.Config) { hooked = cfg })
+
+	rec := putConfigYAML(h, []byte("port: 8318\nproxy-url: "+yamlSaveNewProxy+"\n"))
+
+	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), runtimeconfig.RuntimeSettingProxyURL) {
+		t.Fatalf("PutConfigYAML status = %d body = %s, want 500 naming the stored proxy-url", rec.Code, rec.Body.String())
+	}
+	assertStoredProxyURL(t, yamlSaveNewProxy)
+	storedVersion := settingsstore.RuntimeSettingVersion("", runtimeconfig.RuntimeSettingProxyURL)
+	if h.cfg.ProxyURL != yamlSaveNewProxy || h.cfg.RuntimeSettingState().Version(runtimeconfig.RuntimeSettingProxyURL) != storedVersion {
+		t.Fatalf("live proxy-url = %q at version %d, want the stored %q at %d", h.cfg.ProxyURL, h.cfg.RuntimeSettingState().Version(runtimeconfig.RuntimeSettingProxyURL), yamlSaveNewProxy, storedVersion)
+	}
+	if hooked == nil || hooked != h.cfg {
+		t.Fatal("config mutation hook was not notified with the live config")
+	}
+}
+
+const (
+	yamlSaveOldProxy = "http://old-proxy.example:8080"
+	yamlSaveNewProxy = "http://new-proxy.example:8080"
+)
+
+// newRuntimeSettingYAMLSaveFixture is a node whose database already owns
+// proxy-url and whose config.yaml therefore holds node-local settings only.
+func newRuntimeSettingYAMLSaveFixture(t *testing.T) (*Handler, string, []byte) {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	usage.CloseDB()
+	if err := usage.InitDB(filepath.Join(t.TempDir(), "usage.sqlite"), config.RequestLogStorageConfig{}, time.UTC); err != nil {
+		t.Fatalf("InitDB: %v", err)
+	}
+	t.Cleanup(usage.CloseDB)
+	if err := settingsstore.UpsertRuntimeSetting(runtimeconfig.RuntimeSettingProxyURL, yamlSaveOldProxy); err != nil {
+		t.Fatalf("seed proxy-url: %v", err)
+	}
+	live := &config.Config{}
+	settingsstore.ApplyStoredRuntimeSettings(live)
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	original := []byte("# operator notes\nport: 8318\n")
+	if err := os.WriteFile(configPath, original, 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	return NewHandler(live, configPath, nil), configPath, original
+}
+
+// failRuntimeSettingWrites fails every write of key inside its transaction,
+// before the commit, and leaves reads and other keys alone. It returns a
+// function that lifts the failure early; cleanup lifts it as well.
+func failRuntimeSettingWrites(t *testing.T, key string, err error) func() {
+	t.Helper()
+	restore := configsync.SetPublisherForTest(func(_ context.Context, _ *sql.Tx, ev cluster.ConfigEvent) error {
+		if ev.Key == key {
+			return err
+		}
+		return nil
+	})
+	t.Cleanup(restore)
+	return restore
+}
+
+func putConfigYAML(h *Handler, body []byte) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPut, "/config.yaml", bytes.NewReader(body))
+	h.PutConfigYAML(c)
+	return rec
+}
+
+func assertStoredProxyURL(t *testing.T, want string) {
+	t.Helper()
+	var stored config.Config
+	settingsstore.ApplyStoredRuntimeSettings(&stored)
+	if stored.ProxyURL != want {
+		t.Fatalf("stored proxy-url = %q, want %q", stored.ProxyURL, want)
+	}
+}
+
+func assertFileContent(t *testing.T, path string, want []byte) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	if !bytes.Equal(data, want) {
+		t.Fatalf("%s changed by a failed save:\n%s\nwant:\n%s", filepath.Base(path), data, want)
+	}
 }
 
 func assertPayloadOverrideRule(t *testing.T, payload config.PayloadConfig) {

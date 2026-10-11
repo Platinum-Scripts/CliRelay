@@ -35,8 +35,10 @@ type ImageSizePresetsSetting struct {
 	Sizes []string `json:"sizes"`
 }
 
-func PersistRuntimeSettingsPresentInYAML(cfg *config.Config, yamlContent []byte) {
-	usage.PersistRuntimeSettingsPresentInYAML(cfg, yamlContent)
+// PersistRuntimeSettingsFromYAML stores the runtime settings a config.yaml save
+// spells out; see runtimeconfigpersist.PersistRuntimeSettingsFromYAML.
+func PersistRuntimeSettingsFromYAML(ctx context.Context, cfg *config.Config, yamlContent []byte) ([]string, error) {
+	return runtimeconfigpersist.PersistRuntimeSettingsFromYAML(ctx, cfg, yamlContent)
 }
 
 func MigrateRuntimeSettingsFromConfig(cfg *config.Config, configFilePath string) {
@@ -136,6 +138,6 @@ func RuntimeSettingVersion(tenantID, key string) int64 {
 	return usage.RuntimeSettingVersion(tenantID, key)
 }
 
-func SyncReloadedConfigAfterYAMLSave(cfg *config.Config, configFilePath string, yamlContent []byte) {
-	runtimeconfigpersist.SyncReloadedConfigAfterYAMLSave(cfg, configFilePath, yamlContent)
+func SyncReloadedConfigAfterYAMLSave(cfg *config.Config, configFilePath string) {
+	runtimeconfigpersist.SyncReloadedConfigAfterYAMLSave(cfg, configFilePath)
 }
