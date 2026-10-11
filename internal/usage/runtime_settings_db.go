@@ -63,12 +63,13 @@ func GetRuntimeSettingPayload(key string) (json.RawMessage, bool) {
 }
 
 // PersistRuntimeSettingsPresentInYAML stores DB-backed runtime settings that
-// were explicitly included in a management config.yaml save.
-func PersistRuntimeSettingsPresentInYAML(cfg *config.Config, yamlContent []byte) int {
+// were explicitly included in a management config.yaml save, all or none of
+// them, and returns the keys it wrote.
+func PersistRuntimeSettingsPresentInYAML(ctx context.Context, cfg *config.Config, yamlContent []byte) ([]string, error) {
 	if cfg == nil || !ConfigStoreAvailable() {
-		return 0
+		return nil, nil
 	}
-	return runtimeSettingsStore().PersistPresentInYAML(cfg, yamlContent)
+	return runtimeSettingsStore().PersistPresentInYAML(ctx, cfg, yamlContent)
 }
 
 // ApplyStoredRuntimeSettings overlays the stored settings onto the live config

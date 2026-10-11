@@ -380,6 +380,7 @@ In cluster mode all nodes share one database. Every piece of state that used to 
   - Revoking or deleting an API key rebuilds only the auth map, never the executors, so Codex upstream WebSocket sessions survive.
   - Routing, proxy pool, pricing, model configs, IP rules and tenants each have their own reload path.
 - **Toggles that were YAML-only now live in the database**, shared by all nodes: 14 of them, including `debug`, `request-retry` and `proxy-url`. Node-local settings stay in each node's YAML: port, TLS, `auth-dir`, `postgres`, `redis`, `cluster`, `trusted-proxies`, `auto-update`.
+- **Raw `config.yaml` saves.** When a save from the panel's YAML editor spells out database-owned settings, they are stored in one transaction before the file is written. If that fails, the whole save is rejected and neither the database nor `config.yaml` changes. A conflict returns `409 config_version_conflict`; any other failure returns 500.
 
 ### 6.4 OAuth logins and asynchronous work
 

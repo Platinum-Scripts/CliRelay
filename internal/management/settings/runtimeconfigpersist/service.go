@@ -63,11 +63,26 @@ func SaveNodeLocalConfig(cfg *config.Config, configFilePath string) error {
 	return nil
 }
 
-func SyncReloadedConfigAfterYAMLSave(cfg *config.Config, configFilePath string, yamlContent []byte) {
+// PersistRuntimeSettingsFromYAML stores the runtime settings a management
+// config.yaml save spells out, all or none of them, and returns the keys it
+// wrote. It has to succeed before the file is written: the database owns these
+// keys, and every reload applies the stored value and strips the key from
+// config.yaml, so a value that never reached the database would vanish.
+func PersistRuntimeSettingsFromYAML(ctx context.Context, cfg *config.Config, yamlContent []byte) ([]string, error) {
+	if cfg == nil || !usage.ConfigStoreAvailable() {
+		return nil, nil
+	}
+	return usage.PersistRuntimeSettingsPresentInYAML(ctx, cfg, yamlContent)
+}
+
+// SyncReloadedConfigAfterYAMLSave finishes a management config.yaml save whose
+// runtime settings PersistRuntimeSettingsFromYAML already stored: it strips
+// them from config.yaml and overlays the stored values onto cfg, the config
+// reloaded from the saved file.
+func SyncReloadedConfigAfterYAMLSave(cfg *config.Config, configFilePath string) {
 	if cfg == nil || !usage.ConfigStoreAvailable() {
 		return
 	}
-	usage.PersistRuntimeSettingsPresentInYAML(cfg, yamlContent)
 	usage.MigrateRuntimeSettingsFromConfig(cfg, configFilePath)
 	usage.ApplyStoredRuntimeSettings(cfg)
 }

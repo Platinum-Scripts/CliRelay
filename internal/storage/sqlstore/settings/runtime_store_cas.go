@@ -1,7 +1,6 @@
 package settings
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -175,31 +174,6 @@ func (s RuntimeSettingsStore) InsertIfAbsent(ctx context.Context, key string, va
 		return false, nil
 	}
 	return err == nil, err
-}
-
-// writeIfChanged stores the value spec takes from cfg unless the stored value
-// is already equal, retrying when another writer gets in between. It is for
-// writes that are not based on a version the client saw.
-func (s RuntimeSettingsStore) writeIfChanged(ctx context.Context, spec runtimeconfig.Spec, cfg *config.Config) (bool, error) {
-	want, err := runtimeconfig.Canonical(spec, cfg)
-	if err != nil {
-		return false, err
-	}
-	for attempt := 0; attempt < 3; attempt++ {
-		entry, ok := s.Load(spec.Key)
-		expected := int64(0)
-		if ok {
-			if stored, canonErr := CanonicalPayload(spec, entry.Payload); canonErr == nil && bytes.Equal(stored, want) {
-				return false, nil
-			}
-			expected = entry.Version
-		}
-		_, err = s.CompareAndSwap(ctx, []Change{{Key: spec.Key, Value: spec.Value(cfg), Expected: expected}})
-		if !errors.Is(err, configsync.ErrVersionConflict) {
-			return err == nil, err
-		}
-	}
-	return false, err
 }
 
 // CanonicalPayload renders a stored payload the way Canonical renders a live
