@@ -54,10 +54,12 @@ type modelTestRequest struct {
 	// Images are reference frames for the edit / vision / image-to-video modes,
 	// as data URIs or https URLs.
 	Images []string `json:"images"`
-	// Image options.
-	Size    string `json:"size"`
-	Quality string `json:"quality"`
-	N       int    `json:"n"`
+	// Image options. Gemini image models read AspectRatio (shared with video) and
+	// ImageSize instead of Size and Quality.
+	Size      string `json:"size"`
+	Quality   string `json:"quality"`
+	ImageSize string `json:"image_size"`
+	N         int    `json:"n"`
 	// Video options.
 	Duration    int    `json:"duration"`
 	AspectRatio string `json:"aspect_ratio"`
