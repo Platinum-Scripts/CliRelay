@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/registry"
 	"github.com/tidwall/gjson"
 )
 
@@ -45,7 +46,12 @@ func TestParseGeminiImageRequestShape(t *testing.T) {
 		{"512 spellings collapse", `{"prompt":"p","image_size":"512px"}`, "", "512"},
 		{"half-K spelling", `{"prompt":"p","image_size":"0.5K"}`, "", "512"},
 		{"unknown K tier is left for upstream to judge", `{"prompt":"p","image_size":"8K"}`, "", "8K"},
-		{"ratio is reduced", `{"prompt":"p","aspect_ratio":"32 : 18"}`, "16:9", ""},
+		{"ratio maps onto the accepted spelling", `{"prompt":"p","aspect_ratio":"32 : 18"}`, "16:9", ""},
+		// Upstream spells it 21:9; the reduced 7:3 is rejected with INVALID_ARGUMENT.
+		{"21:9 is not reduced", `{"prompt":"p","aspect_ratio":"21:9"}`, "21:9", ""},
+		{"7:3 maps to the 21:9 upstream accepts", `{"prompt":"p","aspect_ratio":"7:3"}`, "21:9", ""},
+		{"2:2 is the square", `{"prompt":"p","aspect_ratio":"2:2"}`, "1:1", ""},
+		{"an unknown ratio passes through as written", `{"prompt":"p","aspect_ratio":"34:10"}`, "34:10", ""},
 		{"auto means unset", `{"prompt":"p","aspect_ratio":"auto","image_size":"auto","size":"auto"}`, "", ""},
 		{"square size", `{"prompt":"p","size":"1024x1024"}`, "1:1", "1K"},
 		{"landscape gpt-image size", `{"prompt":"p","size":"1536x1024"}`, "3:2", "1K"},
@@ -301,6 +307,22 @@ func TestBuildOpenAIImagesResponseWithoutImage(t *testing.T) {
 				t.Fatalf("message %q must carry the invalid-request signal", status.Error())
 			}
 		})
+	}
+}
+
+// Every value the console offers must reach upstream exactly as upstream spells
+// it. Reducing 21:9 to 7:3 is how a picker choice once came back as a 400.
+func TestNormalizeGeminiAspectRatioKeepsEveryAcceptedRatio(t *testing.T) {
+	for _, ratio := range registry.GeminiImageAspectRatios() {
+		got, err := normalizeGeminiAspectRatio(ratio)
+		if err != nil || got != ratio {
+			t.Errorf("normalizeGeminiAspectRatio(%q) = %q, %v; want it unchanged", ratio, got, err)
+		}
+	}
+	for _, bad := range []string{"0:1", "1:0", "16x9", "99999:1", "-1:2", "wide"} {
+		if _, err := normalizeGeminiAspectRatio(bad); err == nil {
+			t.Errorf("normalizeGeminiAspectRatio(%q) accepted a malformed ratio", bad)
+		}
 	}
 }
 
