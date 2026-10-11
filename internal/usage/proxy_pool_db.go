@@ -1,10 +1,12 @@
 package usage
 
 import (
+	"context"
 	"database/sql"
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
 	sqlproxypool "github.com/router-for-me/CLIProxyAPI/v6/internal/storage/sqlstore/proxypool"
+	log "github.com/sirupsen/logrus"
 )
 
 // Compatibility bridge contract:
@@ -62,9 +64,12 @@ func MigrateProxyPoolFromConfig(cfg *config.Config, configFilePath string) int {
 	if cfg == nil || !ProxyPoolStoreAvailable() {
 		return 0
 	}
+	fileEntries := cfg.ProxyPool
 	migrated, hadStored, shouldClean := proxyPoolStore().MigrateFromConfig(cfg)
 	if hadStored {
-		cleanProxyPoolFromYAML(configFilePath)
+		if cleanProxyPoolFromYAML(configFilePath) > 0 {
+			warnIfYAMLProxyPoolIgnored(fileEntries)
+		}
 		return 0
 	}
 	if shouldClean && configFilePath != "" {
@@ -73,6 +78,20 @@ func MigrateProxyPoolFromConfig(cfg *config.Config, configFilePath string) int {
 		}
 	}
 	return migrated
+}
+
+// warnIfYAMLProxyPoolIgnored is warnIfYAMLRoutingIgnored for proxy-pool.
+func warnIfYAMLProxyPoolIgnored(fileEntries []config.ProxyPoolEntry) {
+	if config.SameProxyPool(fileEntries, proxyPoolStore().List()) {
+		return
+	}
+	log.Warnf("usage: ignored the proxy-pool section of config.yaml: it differs from the proxy pool stored in the database, which owns it; edit proxies on %s", databaseOwnedSectionHomes["proxy-pool"])
+}
+
+// LoadStoredProxyPool returns the system tenant's stored proxy pool, or the
+// error that kept it from being read; ListProxyPool returns nothing then.
+func LoadStoredProxyPool(ctx context.Context) ([]config.ProxyPoolEntry, error) {
+	return proxyPoolStore().ListContext(ctx)
 }
 
 func ProxyPoolStoreAvailableForTenant(tenantID string) bool {

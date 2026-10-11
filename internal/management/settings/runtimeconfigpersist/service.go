@@ -75,6 +75,19 @@ func PersistRuntimeSettingsFromYAML(ctx context.Context, cfg *config.Config, yam
 	return usage.PersistRuntimeSettingsPresentInYAML(ctx, cfg, yamlContent)
 }
 
+// DatabaseOwnedSectionsChangedByYAML returns the sections other than runtime
+// settings that the database owns and a management config.yaml save would
+// change: routing, proxy-pool and the API key sections, once stored. Runtime
+// settings are stored from the save; these are not, because their own
+// endpoints validate them, version them and apply their side effects, and the
+// editor never shows their stored value, so a section written there would
+// overwrite what the database holds without the operator having seen it. The
+// save must be rejected, before anything is stored or written, when this
+// returns any or fails. See usage.DatabaseOwnedSectionsChangedByYAML.
+func DatabaseOwnedSectionsChangedByYAML(ctx context.Context, cfg *config.Config, yamlContent []byte, canonicalizeRouting func(config.RoutingConfig) config.RoutingConfig) ([]usage.DatabaseOwnedSection, error) {
+	return usage.DatabaseOwnedSectionsChangedByYAML(ctx, cfg, yamlContent, canonicalizeRouting)
+}
+
 // SyncReloadedConfigAfterYAMLSave finishes a management config.yaml save whose
 // runtime settings PersistRuntimeSettingsFromYAML already stored: it strips
 // them from config.yaml and overlays the stored values onto cfg, the config

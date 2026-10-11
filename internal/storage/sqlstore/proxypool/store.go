@@ -66,12 +66,14 @@ func (s Store) Available() bool {
 	return s.db != nil
 }
 
+const listProxyPoolSQL = `SELECT id, name, url, enabled, description FROM proxy_pool WHERE tenant_id = ? ORDER BY created_at ASC, id ASC`
+
 func (s Store) List() []config.ProxyPoolEntry {
 	if s.db == nil {
 		return nil
 	}
 
-	rows, err := s.db.Query(`SELECT id, name, url, enabled, description FROM proxy_pool WHERE tenant_id = ? ORDER BY created_at ASC, id ASC`, s.tenantID)
+	rows, err := s.db.Query(listProxyPoolSQL, s.tenantID)
 	if err != nil {
 		log.Errorf("sqlite/proxypool: list proxy_pool: %v", err)
 		return nil
@@ -89,6 +91,35 @@ func (s Store) List() []config.ProxyPoolEntry {
 		log.Warnf("sqlite/proxypool: scan proxy_pool rows: %v", err)
 	}
 	return entries
+}
+
+// ListContext is List for callers that must tell an empty pool from one that
+// could not be read: List logs a failed query and returns nothing, and skips
+// rows it cannot scan, where ListContext returns the error.
+func (s Store) ListContext(ctx context.Context) ([]config.ProxyPoolEntry, error) {
+	if s.db == nil {
+		return nil, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	rows, err := s.db.QueryContext(ctx, listProxyPoolSQL, s.tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("list proxy_pool: %w", err)
+	}
+	defer rows.Close()
+	entries := make([]config.ProxyPoolEntry, 0)
+	for rows.Next() {
+		entry, err := scanEntryErr(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan proxy_pool row: %w", err)
+		}
+		entries = append(entries, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read proxy_pool rows: %w", err)
+	}
+	return entries, nil
 }
 
 // ListEnabledURLs returns the URL of every enabled entry of every tenant. It
@@ -251,16 +282,24 @@ func (s Store) MigrateFromConfig(cfg *config.Config) (migrated int, hadStored bo
 }
 
 func scanEntry(scanner scanner) (config.ProxyPoolEntry, bool) {
-	var entry config.ProxyPoolEntry
-	var enabledInt int
-	if err := scanner.Scan(&entry.ID, &entry.Name, &entry.URL, &enabledInt, &entry.Description); err != nil {
+	entry, err := scanEntryErr(scanner)
+	if err != nil {
 		if err != sql.ErrNoRows {
 			log.Warnf("sqlite/proxypool: scan proxy_pool row: %v", err)
 		}
 		return config.ProxyPoolEntry{}, false
 	}
-	entry.Enabled = enabledInt != 0
 	return entry, true
+}
+
+func scanEntryErr(scanner scanner) (config.ProxyPoolEntry, error) {
+	var entry config.ProxyPoolEntry
+	var enabledInt int
+	if err := scanner.Scan(&entry.ID, &entry.Name, &entry.URL, &enabledInt, &entry.Description); err != nil {
+		return config.ProxyPoolEntry{}, err
+	}
+	entry.Enabled = enabledInt != 0
+	return entry, nil
 }
 
 func migrateTenantSchema(db *sql.DB) {

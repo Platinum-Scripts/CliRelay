@@ -15,32 +15,46 @@ import (
 )
 
 // GetWithVersion returns the stored routing config and its row version, or
-// (nil, 0) when the tenant has none.
+// (nil, 0) when the tenant has none. A row that cannot be read counts as
+// none; see Load.
 func (s Store) GetWithVersion() (*config.RoutingConfig, int64) {
+	stored, version, err := s.Load(context.Background())
+	if err != nil {
+		log.Warnf("sqlite/routing: %v", err)
+	}
+	return stored, version
+}
+
+// Load is GetWithVersion for callers that must not mistake a row they could
+// not read for a tenant without one. A row whose payload does not decode
+// returns its version with the error.
+func (s Store) Load(ctx context.Context) (*config.RoutingConfig, int64, error) {
 	if s.db == nil {
-		return nil, 0
+		return nil, 0, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	var (
 		payload string
 		version int64
 	)
-	if err := s.db.QueryRow(`SELECT payload, version FROM routing_config WHERE tenant_id = ? AND id = 1`, s.tenantID).Scan(&payload, &version); err != nil {
-		if !errors.Is(err, sql.ErrNoRows) {
-			log.Warnf("sqlite/routing: load routing_config: %v", err)
+	if err := s.db.QueryRowContext(ctx, `SELECT payload, version FROM routing_config WHERE tenant_id = ? AND id = 1`, s.tenantID).Scan(&payload, &version); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, 0, nil
 		}
-		return nil, 0
+		return nil, 0, fmt.Errorf("load routing_config: %w", err)
 	}
 	payload = strings.TrimSpace(payload)
 	if payload == "" {
-		return nil, version
+		return nil, version, nil
 	}
 	var cfg config.RoutingConfig
 	if err := json.Unmarshal([]byte(payload), &cfg); err != nil {
-		log.Warnf("sqlite/routing: decode routing_config: %v", err)
-		return nil, version
+		return nil, version, fmt.Errorf("decode routing_config: %w", err)
 	}
 	normalized := normalize(cfg)
-	return &normalized, version
+	return &normalized, version, nil
 }
 
 // CompareAndSwap stores cfg if the stored version still equals expected (0:

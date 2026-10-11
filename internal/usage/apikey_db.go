@@ -1,6 +1,7 @@
 package usage
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -55,16 +56,12 @@ func MigrateAPIKeysFromConfig(cfg *config.Config, configFilePath string) (int, e
 		return 0, nil
 	}
 
-	var count int64
-	if err := db.QueryRow("SELECT COUNT(*) FROM api_keys").Scan(&count); err != nil {
+	stored, err := APIKeysStored(context.Background())
+	if err != nil {
 		return 0, err
 	}
-	if count > 0 {
-		cfg.APIKeys = nil
-		cfg.APIKeyEntries = nil
-		if configFilePath != "" {
-			cleanAPIKeysFromYAML(configFilePath)
-		}
+	if stored {
+		dropYAMLAPIKeys(cfg, configFilePath)
 		return 0, nil
 	}
 
@@ -148,6 +145,15 @@ func MigrateAPIKeysFromConfig(cfg *config.Config, configFilePath string) (int, e
 	}
 
 	return len(rows), nil
+}
+
+// APIKeysStored reports whether the database holds an API key of any tenant.
+// From then on the database owns API keys and config.yaml's api-keys and
+// api-key-entries are not read: startup drops them (MigrateAPIKeysFromConfig)
+// and so does every reload (DropYAMLAPIKeysWhenStored), while a management
+// config.yaml save that spells out keys is rejected.
+func APIKeysStored(ctx context.Context) (bool, error) {
+	return sqlapikey.AnyStored(ctx, getDB())
 }
 
 // WarnEnabledPlaceholderAPIKeys reports enabled database keys whose value is one of

@@ -13,7 +13,6 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/configsync"
 	runtimeconfig "github.com/router-for-me/CLIProxyAPI/v6/internal/management/settings/runtimeconfig"
 	log "github.com/sirupsen/logrus"
-	"gopkg.in/yaml.v3"
 )
 
 const createRuntimeSettingsTableSQL = `
@@ -106,7 +105,7 @@ func (s RuntimeSettingsStore) PersistPresentInYAML(ctx context.Context, cfg *con
 	if s.db == nil || cfg == nil {
 		return nil, nil
 	}
-	present := yamlRootKeys(yamlContent)
+	present := config.YAMLRootKeys(yamlContent)
 	if len(present) == 0 {
 		return nil, nil
 	}
@@ -229,35 +228,6 @@ func (s RuntimeSettingsStore) MigrateFromConfig(cfg *config.Config) (migrated in
 		}
 	}
 	return migrated, hadStored
-}
-
-func yamlRootKeys(data []byte) map[string]bool {
-	if len(data) == 0 {
-		return nil
-	}
-	var root yaml.Node
-	if err := yaml.Unmarshal(data, &root); err != nil {
-		return nil
-	}
-	if root.Kind != yaml.DocumentNode || len(root.Content) == 0 {
-		return nil
-	}
-	mapping := root.Content[0]
-	if mapping == nil || mapping.Kind != yaml.MappingNode {
-		return nil
-	}
-	keys := make(map[string]bool, len(mapping.Content)/2)
-	for i := 0; i+1 < len(mapping.Content); i += 2 {
-		key := mapping.Content[i]
-		if key == nil || key.Kind != yaml.ScalarNode {
-			continue
-		}
-		name := strings.TrimSpace(key.Value)
-		if name != "" {
-			keys[name] = true
-		}
-	}
-	return keys
 }
 
 func migrateRuntimeSettingsTenantSchema(db *sql.DB) {
