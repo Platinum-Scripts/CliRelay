@@ -1,6 +1,7 @@
 package management
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -398,9 +399,14 @@ func (h *Handler) PutConfigYAML(c *gin.Context) {
 	defer func() {
 		_ = os.Remove(tempFile)
 	}()
-	_, err = config.LoadConfigOptional(tempFile, false)
+	validated, err := config.LoadConfigOptional(tempFile, false)
 	if err != nil {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "invalid_config", "message": err.Error()})
+		return
+	}
+	// Ahead of the routing checks: a database-owned section is rejected
+	// whether or not it is valid, and the operator learns where to edit it.
+	if h.rejectDatabaseOwnedSectionChanges(c, validated, body) {
 		return
 	}
 	var auths []*coreauth.Auth
@@ -412,19 +418,43 @@ func (h *Handler) PutConfigYAML(c *gin.Context) {
 		return
 	}
 	h.mu.Lock()
-	if WriteConfig(h.configFilePath, body) != nil {
+	// Store the runtime settings the YAML spells out before writing the file,
+	// all in one transaction. The database owns them: the reload after this
+	// save, the watcher and a restart all apply the stored value and strip the
+	// key from config.yaml, so a value that failed to store would be gone while
+	// the save reported success. Failing here rejects the save instead, with
+	// the database and config.yaml untouched. A client hanging up must not
+	// cancel the write mid-commit, where it may be stored all the same.
+	stored, err := settingsstore.PersistRuntimeSettingsFromYAML(context.WithoutCancel(c.Request.Context()), validated, body)
+	if err != nil {
 		h.mu.Unlock()
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "write_failed", "message": "failed to write config"})
+		log.WithError(err).Warn("management: config.yaml save rejected: storing its runtime settings failed")
+		writeConfigSaveError(c, "config.yaml was not saved: failed to store its runtime settings", err)
+		return
+	}
+	if errWrite := WriteConfig(h.configFilePath, body); errWrite != nil {
+		live, mutated := h.adoptStoredRuntimeSettingsLocked(validated, stored)
+		h.mu.Unlock()
+		log.WithError(errWrite).WithField("stored_runtime_settings", stored).Error("management: failed to write config.yaml")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "write_failed", "message": withStoredRuntimeSettings("failed to write config", stored)})
+		if mutated != nil {
+			mutated(live)
+		}
 		return
 	}
 	// Reload into handler to keep memory in sync
 	newCfg, err := config.LoadConfig(h.configFilePath)
 	if err != nil {
+		live, mutated := h.adoptStoredRuntimeSettingsLocked(validated, stored)
 		h.mu.Unlock()
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "reload_failed", "message": err.Error()})
+		log.WithError(err).WithField("stored_runtime_settings", stored).Error("management: failed to reload config.yaml after writing it")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "reload_failed", "message": withStoredRuntimeSettings(err.Error(), stored)})
+		if mutated != nil {
+			mutated(live)
+		}
 		return
 	}
-	settingsstore.SyncReloadedConfigAfterYAMLSave(newCfg, h.configFilePath, body)
+	settingsstore.SyncReloadedConfigAfterYAMLSave(newCfg, h.configFilePath)
 	h.cfg = newCfg
 	mutated := h.onConfigMutated
 	h.mu.Unlock()
@@ -432,6 +462,33 @@ func (h *Handler) PutConfigYAML(c *gin.Context) {
 	if mutated != nil {
 		mutated(newCfg)
 	}
+}
+
+// adoptStoredRuntimeSettingsLocked is for a config.yaml save that stored keys
+// from src but then failed to write or reload the file. The other nodes apply
+// the stored values from the event the write published; a node never receives
+// its own events, so the keys are copied into this node's live config, as a
+// successful settings write does, instead of waiting for some later reload.
+// It returns the live config and the hook to notify, both nil when nothing was
+// stored. h.mu must be held.
+func (h *Handler) adoptStoredRuntimeSettingsLocked(src *config.Config, keys []string) (*config.Config, func(*config.Config)) {
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	if h.cfg == nil {
+		h.cfg = &config.Config{}
+	}
+	settingsstore.AdoptKeys(h.cfg, src, keys...)
+	return h.cfg, h.onConfigMutated
+}
+
+// withStoredRuntimeSettings tells the operator of a failed config.yaml save
+// which of its settings took effect regardless.
+func withStoredRuntimeSettings(message string, stored []string) string {
+	if len(stored) == 0 {
+		return message
+	}
+	return message + "; its runtime settings were stored and are in effect: " + strings.Join(stored, ", ")
 }
 
 // GetConfigYAML returns the raw config.yaml file bytes without re-encoding.

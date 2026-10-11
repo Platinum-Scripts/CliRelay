@@ -67,12 +67,16 @@ type modelTestModeInfo struct {
 // nothing about whether this deployment can run an edit or an image-to-video call
 // for that model.
 type modelTestOptions struct {
-	Model              string              `json:"model"`
-	Modes              []modelTestModeInfo `json:"modes"`
-	Sizes              []string            `json:"sizes,omitempty"`
-	Qualities          []string            `json:"qualities,omitempty"`
-	MaxImages          int                 `json:"max_images,omitempty"`
-	MaxDurationSeconds int                 `json:"max_duration_seconds,omitempty"`
+	Model     string              `json:"model"`
+	Modes     []modelTestModeInfo `json:"modes"`
+	Sizes     []string            `json:"sizes,omitempty"`
+	Qualities []string            `json:"qualities,omitempty"`
+	// AspectRatios and ImageSizes replace Sizes and Qualities for models that are
+	// shaped by ratio and size tier (Gemini image models).
+	AspectRatios       []string `json:"aspect_ratios,omitempty"`
+	ImageSizes         []string `json:"image_sizes,omitempty"`
+	MaxImages          int      `json:"max_images,omitempty"`
+	MaxDurationSeconds int      `json:"max_duration_seconds,omitempty"`
 }
 
 // imageTestQualities mirrors the levels the image console offers. Kept as a plain
@@ -95,7 +99,7 @@ func modelTestModes(model string) []modelTestModeInfo {
 			})
 		}
 		return modes
-	case registry.IsImageGenerationModel(model):
+	case isImageEndpointModel(model):
 		modes := []modelTestModeInfo{{Mode: modeImage, DefaultPrompt: defaultImageTestPrompt}}
 		if registry.SupportsImageEditing(model) {
 			modes = append(modes, modelTestModeInfo{
@@ -118,14 +122,33 @@ func modelTestModes(model string) []modelTestModeInfo {
 	}
 }
 
+// isImageEndpointModel reports whether a model is probed on the images endpoint.
+//
+// A Gemini image model qualifies only while a provider serves it there. Through
+// any other credential it is a chat model whose answer carries a picture, and the
+// chat probe is the honest test of that path.
+func isImageEndpointModel(model string) bool {
+	if registry.IsImageGenerationModel(model) {
+		return true
+	}
+	return registry.IsGeminiImageModel(model) && registry.ImageGenerationProvider(model) != ""
+}
+
 // buildModelTestOptions assembles the form description for one model.
 func buildModelTestOptions(model, tenantID string) modelTestOptions {
 	options := modelTestOptions{Model: model, Modes: modelTestModes(model)}
 	for _, mode := range options.Modes {
 		switch mode.Mode {
 		case modeImage, modeImageEdit:
-			options.Sizes = imageGenerationSizePresetsForTenant(tenantID)
-			options.Qualities = imageTestQualities
+			if registry.IsGeminiImageModel(model) {
+				// A WIDTHxHEIGHT list and gpt-image qualities would offer choices
+				// this model cannot honour; it is shaped by ratio and size tier.
+				options.AspectRatios = registry.GeminiImageAspectRatios()
+				options.ImageSizes = registry.GeminiImageSizes()
+			} else {
+				options.Sizes = imageGenerationSizePresetsForTenant(tenantID)
+				options.Qualities = imageTestQualities
+			}
 			options.MaxImages = imageMaxUploads
 		case modeVideo, modeVideoFromImage:
 			options.MaxImages = 1
@@ -259,7 +282,12 @@ func buildImageTestPayload(req modelTestRequest, mode modelTestMode) ([]byte, er
 	if payload, err = sjson.SetBytes(payload, "n", count); err != nil {
 		return nil, fmt.Errorf("build image test payload: %w", err)
 	}
-	for path, value := range map[string]string{"size": req.Size, "quality": req.Quality} {
+	for path, value := range map[string]string{
+		"size":         req.Size,
+		"quality":      req.Quality,
+		"aspect_ratio": req.AspectRatio,
+		"image_size":   req.ImageSize,
+	} {
 		if trimmed := strings.TrimSpace(value); trimmed != "" {
 			if payload, err = sjson.SetBytes(payload, path, trimmed); err != nil {
 				return nil, fmt.Errorf("build image test payload: %w", err)

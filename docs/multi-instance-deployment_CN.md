@@ -366,6 +366,11 @@ GitHub Actions 的 `Deploy CliRelay` 按节点逐台部署：
   - 吊销、删除 API Key 只重建鉴权表，不重建执行器，所以不会打断 Codex 上游 WebSocket 会话。
   - 路由、代理池、价格、模型配置、IP 规则、租户各有自己的重载路径。
 - **原来只存在本机 YAML 的开关迁入数据库**：debug、request-retry、proxy-url 等 14 项，所有节点共用一份。节点本地的设置（端口、TLS、`auth-dir`、`postgres`、`redis`、`cluster`、`trusted-proxies`、`auto-update` 等）仍在各自的 YAML 里。
+- **直接保存 `config.yaml`**：面板 YAML 编辑器提交的内容先检查、先写库，最后才写文件。被拒绝的保存不会改动数据库和 `config.yaml`。
+  - 写了的运行时设置在一个事务里写进数据库。写入失败则整次保存被拒绝：版本冲突返回 409 `config_version_conflict`，其他失败返回 500。
+  - `routing`、`proxy-pool`、`api-keys`、`api-key-entries`、`api-key-permission-profiles` 一旦数据库里有数据，就不再从文件写入。改动其中任何一段的保存返回 422 `config_yaml_database_owned_sections`，响应里列出这些段和各自的修改页面。和库里相同的 `routing`、`proxy-pool` 可以通过，公开的示例 API Key 也可以通过。数据库里还没有的段照旧导入：`routing`、`proxy-pool` 在保存后的重载时导入，其余在下次启动时导入。
+  - 库里已有的段读不出来时，写了该段的保存返回 500。
+- **手工编辑 `config.yaml` 写进的归数据库管理的段**：下次重载或启动时会被剥掉，生效的仍是库里的值；`routing`、`proxy-pool` 和库里不同时会记一条警告日志。数据库里有 API Key 之后，文件里的 key 不能用于认证（以前重载后会只在本节点生效）。
 
 ### 6.4 OAuth 登录与异步任务
 

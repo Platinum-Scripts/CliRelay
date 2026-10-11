@@ -277,10 +277,7 @@ func (h *Handler) executeImageGenerationTestForTenant(ctx context.Context, tenan
 			Alt:             alt,
 			OriginalRequest: payload,
 			SourceFormat:    sdktranslator.FromString("openai"),
-			Metadata: map[string]any{
-				coreexecutor.SinglePickMetadataKey: true,
-				coreexecutor.TenantMetadataKey:     coreauth.NormalizedTenantID(tenantID),
-			},
+			Metadata:        probeMetadata(tenantID),
 		})
 		if execErr != nil {
 			return nil, execErr
@@ -422,6 +419,10 @@ func parseImageGenerationTestPayload(c *gin.Context) ([]byte, string, error) {
 		Size    string `json:"size"`
 		Quality string `json:"quality"`
 		N       int    `json:"n"`
+		// Gemini image models are shaped by ratio and size tier instead of size and
+		// quality; see internal/runtime/executor/gemini_image_api.go.
+		AspectRatio string `json:"aspect_ratio"`
+		ImageSize   string `json:"image_size"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		return nil, "", fmt.Errorf("invalid body")
@@ -443,6 +444,12 @@ func parseImageGenerationTestPayload(c *gin.Context) ([]byte, string, error) {
 	}
 	if quality := strings.TrimSpace(body.Quality); quality != "" {
 		payload["quality"] = quality
+	}
+	if aspectRatio := strings.TrimSpace(body.AspectRatio); aspectRatio != "" {
+		payload["aspect_ratio"] = aspectRatio
+	}
+	if imageSize := strings.TrimSpace(body.ImageSize); imageSize != "" {
+		payload["image_size"] = imageSize
 	}
 	if body.N > 0 {
 		payload["n"] = body.N
@@ -474,7 +481,7 @@ func parseImageGenerationMultipartPayload(c *gin.Context) ([]byte, string, error
 	if quality := firstImageGenerationFormValue(form.Value, "quality", ""); quality != "" {
 		payload["quality"] = quality
 	}
-	for _, field := range []string{"background", "output_format", "moderation", "input_fidelity", "style"} {
+	for _, field := range []string{"background", "output_format", "moderation", "input_fidelity", "style", "aspect_ratio", "image_size"} {
 		if value := firstImageGenerationFormValue(form.Value, field, ""); value != "" {
 			payload[field] = value
 		}
@@ -595,6 +602,10 @@ type imageGenerationProviderChannels struct {
 func (h *Handler) ListImageGenerationChannels(c *gin.Context) {
 	byProvider := make(map[string][]string)
 	seen := make(map[string]struct{})
+	// Read once: the catalog now includes models discovered per credential, so it
+	// costs a registry scan rather than a static lookup.
+	models := registry.ListImageGenerationModels()
+	providersWithModels := imageGenerationModelProviders(models)
 
 	if h != nil && h.authManager != nil {
 		for _, auth := range h.authManager.ListForTenant(effectiveTenantID(c)) {
@@ -604,7 +615,7 @@ func (h *Handler) ListImageGenerationChannels(c *gin.Context) {
 			provider := strings.ToLower(strings.TrimSpace(auth.Provider))
 			// Only providers that actually serve an image model are offered; every
 			// other credential in the tenant is irrelevant to this page.
-			if !imageGenerationProviderHasModels(provider) {
+			if _, ok := providersWithModels[provider]; !ok {
 				continue
 			}
 			accountType, _ := auth.AccountInfo()
@@ -624,7 +635,6 @@ func (h *Handler) ListImageGenerationChannels(c *gin.Context) {
 		}
 	}
 
-	models := registry.ListImageGenerationModels()
 	providers := make([]imageGenerationProviderChannels, 0, len(byProvider))
 	flat := make([]string, 0)
 	flatSeen := make(map[string]struct{})
@@ -664,16 +674,14 @@ func (h *Handler) ListImageGenerationChannels(c *gin.Context) {
 	})
 }
 
-// imageGenerationProviderHasModels reports whether a credential provider serves at
-// least one image model this build knows about.
-func imageGenerationProviderHasModels(provider string) bool {
-	if strings.TrimSpace(provider) == "" {
-		return false
-	}
-	for _, model := range registry.ListImageGenerationModels() {
-		if strings.EqualFold(model.Provider, provider) {
-			return true
+// imageGenerationModelProviders lists the credential providers that serve at
+// least one of the given image models, lower-cased for lookup.
+func imageGenerationModelProviders(models []registry.ImageGenerationModel) map[string]struct{} {
+	providers := make(map[string]struct{}, len(models))
+	for _, model := range models {
+		if provider := strings.ToLower(strings.TrimSpace(model.Provider)); provider != "" {
+			providers[provider] = struct{}{}
 		}
 	}
-	return false
+	return providers
 }

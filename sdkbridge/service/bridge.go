@@ -164,6 +164,18 @@ func IsProviderDiscoveryCredential(auth *coreauth.Auth, provider string) bool {
 	return internalserviceapp.IsProviderDiscoveryCredential(auth, provider)
 }
 
+// ProviderDiscoverySnapshotPath is where the shared upstream lists are kept across
+// restarts.
+func ProviderDiscoverySnapshotPath(authDir string) string {
+	return internalserviceapp.ProviderDiscoverySnapshotPath(authDir)
+}
+
+// LoadProviderDiscoverySnapshot restores the shared upstream lists the previous
+// process saved; see internal/app/service.
+func LoadProviderDiscoverySnapshot(authDir string) (int, error) {
+	return internalserviceapp.LoadProviderDiscoverySnapshot(authDir)
+}
+
 // ProviderDiscoverySnapshot returns the last upstream model list stored for a
 // tenant's credentials of a routing provider.
 func ProviderDiscoverySnapshot(tenantID, provider string) []*sdkmodelcatalog.ModelInfo {

@@ -154,6 +154,17 @@ func routeGroupFromMetadata(meta map[string]any) string {
 	}
 }
 
+// tenantWideSelectionFromMetadata reports whether the request may select from
+// every credential of its tenant; see cliproxyexecutor.TenantWideSelectionMetadataKey.
+func tenantWideSelectionFromMetadata(meta map[string]any) bool {
+	raw, ok := meta[cliproxyexecutor.TenantWideSelectionMetadataKey]
+	if !ok || raw == nil {
+		return false
+	}
+	enabled, ok := parseBoolAny(raw)
+	return ok && enabled
+}
+
 func routeFallbackFromMetadata(meta map[string]any) string {
 	if len(meta) == 0 {
 		return "none"

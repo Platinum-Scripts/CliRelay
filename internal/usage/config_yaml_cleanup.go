@@ -34,7 +34,7 @@ func runtimeSettingYAMLKeys() map[string]bool {
 // dbBackedConfigYAMLKeys are all config.yaml root keys owned by the database.
 func dbBackedConfigYAMLKeys() map[string]bool {
 	keys := runtimeSettingYAMLKeys()
-	for _, key := range []string{"api-keys", "api-key-entries", "api-key-permission-profiles", "routing", "proxy-pool"} {
+	for _, key := range databaseOwnedSectionOrder {
 		keys[key] = true
 	}
 	return keys
@@ -77,21 +77,21 @@ func backupConfigForMigration(configFilePath string, suffix string) bool {
 	return true
 }
 
-func cleanAPIKeysFromYAML(configFilePath string) {
-	cleanConfigKeysFromYAML(configFilePath, map[string]bool{
+func cleanAPIKeysFromYAML(configFilePath string) int {
+	return cleanConfigKeysFromYAML(configFilePath, map[string]bool{
 		"api-keys":        true,
 		"api-key-entries": true,
 	}, "api_keys")
 }
 
-func cleanProxyPoolFromYAML(configFilePath string) {
-	cleanConfigKeysFromYAML(configFilePath, map[string]bool{
+func cleanProxyPoolFromYAML(configFilePath string) int {
+	return cleanConfigKeysFromYAML(configFilePath, map[string]bool{
 		"proxy-pool": true,
 	}, "proxy_pool")
 }
 
-func cleanRoutingConfigFromYAML(configFilePath string) {
-	cleanConfigKeysFromYAML(configFilePath, map[string]bool{
+func cleanRoutingConfigFromYAML(configFilePath string) int {
+	return cleanConfigKeysFromYAML(configFilePath, map[string]bool{
 		"routing": true,
 	}, "routing_config")
 }

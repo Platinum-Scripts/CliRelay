@@ -72,6 +72,10 @@ var imageGenerationModelPrefixes = []string{
 }
 
 // IsImageGenerationModel reports whether a model produces images rather than text.
+//
+// Gemini image models are deliberately not counted: chat endpoints serve them and
+// upstream bills them per token. See gemini_image_models.go for how they still
+// reach /v1/images/*.
 func IsImageGenerationModel(modelID string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(modelID))
 	if normalized == "" {
@@ -122,13 +126,17 @@ func ImageGenerationInputModalities(string) []string {
 // to know which credential pool can serve a given image model; without this it
 // pinned every request to codex, which is what kept Grok models unreachable.
 const (
-	ImageProviderCodex   = "codex"
-	ImageProviderXAI     = "xai"
-	ImageProviderMiniMax = "minimax"
+	ImageProviderCodex       = "codex"
+	ImageProviderXAI         = "xai"
+	ImageProviderMiniMax     = "minimax"
+	ImageProviderAntigravity = "antigravity"
 )
 
-// ImageGenerationProvider returns the credential provider that serves a model, or
-// "" when the model is not an image-generation model.
+// ImageGenerationProvider returns the credential provider that serves a model on
+// the /v1/images/* endpoints, or "" when no provider does.
+//
+// Gemini image models are the one dynamic case: they answer only while an
+// Antigravity credential serves them. See gemini_image_models.go.
 func ImageGenerationProvider(modelID string) string {
 	normalized := strings.ToLower(strings.TrimSpace(modelID))
 	switch {
@@ -141,19 +149,27 @@ func ImageGenerationProvider(modelID string) string {
 		return ""
 	case normalized == "image-01":
 		return ImageProviderMiniMax
+	case IsGeminiImageModel(normalized):
+		return geminiImageGenerationProvider(normalized)
 	default:
 		return ""
 	}
 }
 
 // ImageGenerationModel describes a selectable image model for the console.
+//
+// AspectRatios and ImageSizes are set for models whose output shape is chosen by
+// ratio and size tier rather than by a WIDTHxHEIGHT size. The console renders those
+// two pickers instead of the size and quality ones when they are present.
 type ImageGenerationModel struct {
-	ID           string  `json:"id"`
-	Provider     string  `json:"provider"`
-	DisplayName  string  `json:"display_name,omitempty"`
-	Description  string  `json:"description,omitempty"`
-	SupportsEdit bool    `json:"supports_edit"`
-	PricePerCall float64 `json:"price_per_call,omitempty"`
+	ID           string   `json:"id"`
+	Provider     string   `json:"provider"`
+	DisplayName  string   `json:"display_name,omitempty"`
+	Description  string   `json:"description,omitempty"`
+	SupportsEdit bool     `json:"supports_edit"`
+	PricePerCall float64  `json:"price_per_call,omitempty"`
+	AspectRatios []string `json:"aspect_ratios,omitempty"`
+	ImageSizes   []string `json:"image_sizes,omitempty"`
 }
 
 // ListImageGenerationModels enumerates the image models this build knows about,
@@ -198,6 +214,15 @@ func ListImageGenerationModels() []ImageGenerationModel {
 	for _, info := range GetMiniMaxModels() {
 		appendModel(info)
 	}
+	// Gemini image models have no static definition: Antigravity lists them per
+	// credential, so they come from the live registry instead.
+	for _, model := range listGeminiImageGenerationModels() {
+		if _, ok := seen[model.ID]; ok {
+			continue
+		}
+		seen[model.ID] = struct{}{}
+		models = append(models, model)
+	}
 	return models
 }
 
@@ -227,6 +252,10 @@ func SupportsImageEditing(modelID string) bool {
 	case strings.HasPrefix(normalized, "gpt-image-"):
 		return true
 	case strings.HasPrefix(normalized, "grok-imagine-image"):
+		return true
+	// Gemini image models edit by taking the reference frames as inline parts of
+	// the same generateContent call.
+	case IsGeminiImageModel(normalized):
 		return true
 	// image-01 is text-to-image here. The reference-image form of these models is
 	// a separate upstream request shape rather than a variant of the generation

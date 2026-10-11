@@ -156,4 +156,7 @@ func ApplyDBBackedRuntimeSettings(cfg *config.Config, configPath string) {
 	internalusage.ApplyStoredProxyPool(cfg)
 	internalusage.MigrateRuntimeSettingsFromConfig(cfg, configPath)
 	internalusage.ApplyStoredRuntimeSettings(cfg)
+	// Startup does this in MigrateAPIKeysFromConfig. Without it a key written
+	// into config.yaml after startup served as a key of this node alone.
+	internalusage.DropYAMLAPIKeysWhenStored(cfg, configPath)
 }

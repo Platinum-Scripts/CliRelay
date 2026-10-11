@@ -63,11 +63,39 @@ func SaveNodeLocalConfig(cfg *config.Config, configFilePath string) error {
 	return nil
 }
 
-func SyncReloadedConfigAfterYAMLSave(cfg *config.Config, configFilePath string, yamlContent []byte) {
+// PersistRuntimeSettingsFromYAML stores the runtime settings a management
+// config.yaml save spells out, all or none of them, and returns the keys it
+// wrote. It has to succeed before the file is written: the database owns these
+// keys, and every reload applies the stored value and strips the key from
+// config.yaml, so a value that never reached the database would vanish.
+func PersistRuntimeSettingsFromYAML(ctx context.Context, cfg *config.Config, yamlContent []byte) ([]string, error) {
+	if cfg == nil || !usage.ConfigStoreAvailable() {
+		return nil, nil
+	}
+	return usage.PersistRuntimeSettingsPresentInYAML(ctx, cfg, yamlContent)
+}
+
+// DatabaseOwnedSectionsChangedByYAML returns the sections other than runtime
+// settings that the database owns and a management config.yaml save would
+// change: routing, proxy-pool and the API key sections, once stored. Runtime
+// settings are stored from the save; these are not, because their own
+// endpoints validate them, version them and apply their side effects, and the
+// editor never shows their stored value, so a section written there would
+// overwrite what the database holds without the operator having seen it. The
+// save must be rejected, before anything is stored or written, when this
+// returns any or fails. See usage.DatabaseOwnedSectionsChangedByYAML.
+func DatabaseOwnedSectionsChangedByYAML(ctx context.Context, cfg *config.Config, yamlContent []byte, canonicalizeRouting func(config.RoutingConfig) config.RoutingConfig) ([]usage.DatabaseOwnedSection, error) {
+	return usage.DatabaseOwnedSectionsChangedByYAML(ctx, cfg, yamlContent, canonicalizeRouting)
+}
+
+// SyncReloadedConfigAfterYAMLSave finishes a management config.yaml save whose
+// runtime settings PersistRuntimeSettingsFromYAML already stored: it strips
+// them from config.yaml and overlays the stored values onto cfg, the config
+// reloaded from the saved file.
+func SyncReloadedConfigAfterYAMLSave(cfg *config.Config, configFilePath string) {
 	if cfg == nil || !usage.ConfigStoreAvailable() {
 		return
 	}
-	usage.PersistRuntimeSettingsPresentInYAML(cfg, yamlContent)
 	usage.MigrateRuntimeSettingsFromConfig(cfg, configFilePath)
 	usage.ApplyStoredRuntimeSettings(cfg)
 }

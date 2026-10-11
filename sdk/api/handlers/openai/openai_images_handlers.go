@@ -212,7 +212,9 @@ func buildOpenAIImageEditPayloadFromMultipart(c *gin.Context) ([]byte, error) {
 		"model":  firstOpenAIImagesFormValue(form.Value, "model", "gpt-image-2"),
 		"prompt": firstOpenAIImagesFormValue(form.Value, "prompt", ""),
 	}
-	for _, field := range []string{"size", "quality", "response_format", "background", "output_format", "moderation", "input_fidelity", "style"} {
+	// aspect_ratio and image_size shape Gemini image models, which take no
+	// WIDTHxHEIGHT size of their own.
+	for _, field := range []string{"size", "quality", "response_format", "background", "output_format", "moderation", "input_fidelity", "style", "aspect_ratio", "image_size"} {
 		if value := firstOpenAIImagesFormValue(form.Value, field, ""); value != "" {
 			payload[field] = value
 		}

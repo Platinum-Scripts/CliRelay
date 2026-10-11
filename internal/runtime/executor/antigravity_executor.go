@@ -102,6 +102,9 @@ func (e *AntigravityExecutor) Execute(ctx context.Context, auth *cliproxyauth.Au
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if isGeminiImageAlt(opts.Alt) {
+		return e.executeOpenAIImages(ctx, auth, req, opts)
+	}
 	// Every non-streaming request is served by asking the streaming endpoint and
 	// assembling the result.
 	//
@@ -125,6 +128,11 @@ func (e *AntigravityExecutor) Execute(ctx context.Context, auth *cliproxyauth.Au
 func (e *AntigravityExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (_ *cliproxyexecutor.StreamResult, err error) {
 	if opts.Alt == "responses/compact" {
 		return nil, statusErr{code: http.StatusNotImplemented, msg: "/responses/compact not supported"}
+	}
+	// The images endpoints are answered whole; there is no partial-image stream to
+	// relay, and the alt would otherwise land in the upstream URL.
+	if isGeminiImageAlt(opts.Alt) {
+		return nil, statusErr{code: http.StatusBadRequest, msg: "invalid request: streaming image generation is not supported for Gemini image models"}
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -153,6 +161,8 @@ func (e *AntigravityExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 
 	attempts := antigravityRetryAttempts(auth, e.cfg)
 	var locationGate antigravityLocationGateBudget
+	sessionGeneration := 0
+	sessionBumpsLeft := antigravitySessionBumpMaxAttempts
 
 attemptLoop:
 	for attempt := 0; attempt < attempts; attempt++ {
@@ -161,7 +171,7 @@ attemptLoop:
 		var lastErr error
 
 		for idx, baseURL := range baseURLs {
-			httpReq, requestBody, errReq := e.buildRequest(execCtx.Context, auth, token, execCtx.BaseModel, translated, true, opts.Alt, baseURL)
+			httpReq, requestBody, errReq := e.buildRequest(execCtx.Context, auth, token, execCtx.BaseModel, translated, true, opts.Alt, baseURL, sessionGeneration)
 			if errReq != nil {
 				err = errReq
 				return nil, err
@@ -215,6 +225,19 @@ attemptLoop:
 				lastStatus = httpResp.StatusCode
 				lastBody = append([]byte(nil), bodyBytes...)
 				lastErr = nil
+				// A long tool-loop eventually pushes the server-side session past
+				// the 1,048,576-token ceiling, after which every request on that
+				// session id fails 400. Rotate the session id and retry on a fresh
+				// upstream session. This is a recovery, not a capacity retry, so it
+				// keeps its own budget (sessionBumpsLeft) and does not consume an
+				// attempt.
+				if sessionBumpsLeft > 0 && antigravityShouldBumpSession(httpResp.StatusCode, bodyBytes) {
+					sessionGeneration++
+					sessionBumpsLeft--
+					attempt--
+					log.Debugf("antigravity executor: session input exceeds the 1M ceiling for model %s, rotating session id (generation %d) and retrying on a fresh session", execCtx.BaseModel, sessionGeneration)
+					continue attemptLoop
+				}
 				// 429 is an account-level RESOURCE_EXHAUSTED signal, not a
 				// host-specific hiccup: production traces show the same auth
 				// getting 429 on both sandbox and daily back to back, so
@@ -258,47 +281,89 @@ attemptLoop:
 
 			out := make(chan cliproxyexecutor.StreamChunk)
 			reporter.setInputContent(string(req.Payload))
+			reopener := antigravityReopener{
+				executor:          e,
+				ctx:               execCtx.Context,
+				auth:              auth,
+				token:             token,
+				model:             execCtx.BaseModel,
+				alt:               opts.Alt,
+				payload:           translated,
+				baseURLs:          append(append([]string(nil), baseURLs[idx:]...), baseURLs[:idx]...),
+				client:            httpClient,
+				recorder:          recorder,
+				sessionGeneration: sessionGeneration,
+			}
 			go func(resp *http.Response) {
 				defer close(out)
-				defer func() {
-					if errClose := resp.Body.Close(); errClose != nil {
-						log.Errorf("antigravity executor: close response body error: %v", errClose)
-					}
-				}()
-				scanner := bufio.NewScanner(resp.Body)
-				scanner.Buffer(nil, streamScannerBuffer)
 				var param any
-				for scanner.Scan() {
-					line := scanner.Bytes()
-					recorder.AppendResponseChunk(line)
-					reporter.appendOutputChunk(line)
-
-					line = FilterSSEUsageMetadata(line)
-
-					payload := jsonPayload(line)
-					if payload == nil {
-						continue
-					}
-
-					if detail, ok := parseAntigravityStreamUsage(payload); ok {
-						reporter.publish(execCtx.Context, detail)
-					}
-
-					chunks := sdktranslator.TranslateStream(execCtx.Context, execCtx.Execution.TargetFormat, execCtx.SourceFormat, req.Model, execCtx.OriginalPayload, translated, bytes.Clone(payload), &param)
+				translate := func(payload []byte) {
+					chunks := sdktranslator.TranslateStream(execCtx.Context, execCtx.Execution.TargetFormat, execCtx.SourceFormat, req.Model, execCtx.OriginalPayload, translated, payload, &param)
 					for i := range chunks {
 						out <- cliproxyexecutor.StreamChunk{Payload: []byte(chunks[i])}
 					}
 				}
-				tail := sdktranslator.TranslateStream(execCtx.Context, execCtx.Execution.TargetFormat, execCtx.SourceFormat, req.Model, execCtx.OriginalPayload, translated, []byte("[DONE]"), &param)
-				for i := range tail {
-					out <- cliproxyexecutor.StreamChunk{Payload: []byte(tail[i])}
-				}
-				if errScan := scanner.Err(); errScan != nil {
-					recorder.RecordResponseError(errScan)
-					reporter.publishFailure(execCtx.Context)
-					out <- cliproxyexecutor.StreamChunk{Err: errScan}
-				} else {
-					reporter.ensurePublished(execCtx.Context)
+				for retry := 0; ; retry++ {
+					var guard geminiMalformedCallGuard
+					var heldTerminal []byte
+					scanner := bufio.NewScanner(resp.Body)
+					scanner.Buffer(nil, streamScannerBuffer)
+					for scanner.Scan() {
+						line := scanner.Bytes()
+						recorder.AppendResponseChunk(line)
+						reporter.appendOutputChunk(line)
+
+						line = FilterSSEUsageMetadata(line)
+
+						payload := jsonPayload(line)
+						if payload == nil {
+							continue
+						}
+
+						// A malformed-call finish before any visible output: forward the
+						// thinking, hold the terminal, and ask upstream again. The translator
+						// state is kept, so the retry continues the same client response.
+						if retry < antigravityMalformedCallRetries && guard.observe(payload) {
+							heldTerminal = bytes.Clone(payload)
+							translate(stripGeminiTerminal(bytes.Clone(payload)))
+							break
+						}
+
+						if detail, ok := parseAntigravityStreamUsage(payload); ok {
+							reporter.publish(execCtx.Context, detail)
+						}
+						translate(bytes.Clone(payload))
+					}
+					errScan := scanner.Err()
+					if errClose := resp.Body.Close(); errClose != nil {
+						log.Errorf("antigravity executor: close response body error: %v", errClose)
+					}
+
+					if heldTerminal != nil {
+						log.Warnf("antigravity executor: %s for model %s before any output, re-requesting (%d/%d)", geminiFinishMalformedFunctionCall, execCtx.BaseModel, retry+1, antigravityMalformedCallRetries)
+						next, errOpen := reopener.open()
+						if errOpen == nil {
+							resp = next
+							continue
+						}
+						log.Warnf("antigravity executor: re-request after %s failed: %v", geminiFinishMalformedFunctionCall, errOpen)
+						// The retry could not be opened: deliver the held end of turn
+						// (its thinking already went out) so the response still terminates.
+						if detail, ok := parseAntigravityStreamUsage(heldTerminal); ok {
+							reporter.publish(execCtx.Context, detail)
+						}
+						translate(geminiTerminalOnly(heldTerminal))
+					}
+
+					translate([]byte("[DONE]"))
+					if errScan != nil {
+						recorder.RecordResponseError(errScan)
+						reporter.publishFailure(execCtx.Context)
+						out <- cliproxyexecutor.StreamChunk{Err: errScan}
+					} else {
+						reporter.ensurePublished(execCtx.Context)
+					}
+					return
 				}
 			}(httpResp)
 			return &cliproxyexecutor.StreamResult{Headers: httpResp.Header.Clone(), Chunks: out}, nil

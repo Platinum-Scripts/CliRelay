@@ -18,6 +18,9 @@ type selectionScope struct {
 	allowedGroups   map[string]struct{}
 	routeGroup      string
 	routeFallback   string
+	// tenantWide drops the implicit "default" group a request without a route
+	// group would otherwise be placed in.
+	tenantWide bool
 }
 
 func newSelectionScope(cfg *runtimeConfigSnapshot, model string, meta map[string]any) selectionScope {
@@ -31,6 +34,7 @@ func newSelectionScope(cfg *runtimeConfigSnapshot, model string, meta map[string
 		allowedGroups:   allowedChannelGroupsFromMetadata(meta),
 		routeGroup:      routeGroupFromMetadata(meta),
 		routeFallback:   routeFallbackFromMetadata(meta),
+		tenantWide:      tenantWideSelectionFromMetadata(meta),
 	}
 }
 
@@ -74,6 +78,12 @@ func normalizeSelectionModelKey(model string) string {
 }
 
 func (s selectionScope) initialRouteGroup() string {
+	// With no route group the scope is empty, which also skips the group model
+	// lists: modelAllowedByRoutingGroupScopes only consults groups in scope. An
+	// explicit route group still wins.
+	if s.tenantWide && s.routeGroup == "" {
+		return ""
+	}
 	return effectiveRouteGroupForSelection(s.cfg, s.routeGroup, s.allowedGroups, s.modelKey)
 }
 

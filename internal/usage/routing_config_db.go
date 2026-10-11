@@ -7,6 +7,7 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
 	sqlrouting "github.com/router-for-me/CLIProxyAPI/v6/internal/storage/sqlstore/routing"
+	log "github.com/sirupsen/logrus"
 )
 
 // Compatibility bridge contract:
@@ -37,9 +38,12 @@ func MigrateRoutingConfigFromConfig(cfg *config.Config, configFilePath string) b
 	if cfg == nil || !ConfigStoreAvailable() {
 		return false
 	}
+	fileRouting := cfg.Routing
 	migrated, hadStored := routingConfigStore().MigrateFromConfig(cfg)
 	if hadStored {
-		cleanRoutingConfigFromYAML(configFilePath)
+		if cleanRoutingConfigFromYAML(configFilePath) > 0 {
+			warnIfYAMLRoutingIgnored(fileRouting)
+		}
 		return false
 	}
 	if !migrated {
@@ -51,6 +55,28 @@ func MigrateRoutingConfigFromConfig(cfg *config.Config, configFilePath string) b
 		}
 	}
 	return true
+}
+
+// warnIfYAMLRoutingIgnored reports a routing section that was just dropped
+// from config.yaml because the database holds routing, when it differed from
+// the stored value. A management save of such a section is rejected (see
+// DatabaseOwnedSectionsChangedByYAML); a file edited by hand is only noticed
+// here, at the reload or start that drops it. Unlike that check it cannot
+// resolve channel names to their canonical spelling, which needs the auth
+// list, so a copy that only spells a channel differently is reported too.
+func warnIfYAMLRoutingIgnored(fileRouting config.RoutingConfig) {
+	stored := routingConfigStore().Get()
+	if stored == nil || config.SameRoutingConfig(fileRouting, *stored) {
+		return
+	}
+	log.Warnf("usage: ignored the routing section of config.yaml: it differs from the routing stored in the database, which owns it; edit routing on %s", databaseOwnedSectionHomes["routing"])
+}
+
+// LoadStoredRoutingConfig returns the system tenant's stored routing config,
+// nil when it has none, or the error that kept it from being read.
+func LoadStoredRoutingConfig(ctx context.Context) (*config.RoutingConfig, error) {
+	stored, _, err := routingConfigStore().Load(ctx)
+	return stored, err
 }
 
 func GetRoutingConfig() *config.RoutingConfig {

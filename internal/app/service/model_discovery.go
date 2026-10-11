@@ -2,8 +2,10 @@ package serviceapp
 
 import (
 	"context"
+	"path/filepath"
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/modeldiscovery"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/util"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPI/v6/sdk/config"
 	sdkmodelcatalog "github.com/router-for-me/CLIProxyAPI/v6/sdk/modelcatalog"
@@ -33,6 +35,24 @@ func ProviderDiscoverySnapshot(tenantID, provider string) []*sdkmodelcatalog.Mod
 		return nil
 	}
 	return modeldiscovery.Snapshot(tenantID, provider)
+}
+
+// providerDiscoverySnapshotFile keeps the shared upstream lists across restarts,
+// next to the per-credential lists in the persistent state directory.
+const providerDiscoverySnapshotFile = "provider-model-lists.json"
+
+// ProviderDiscoverySnapshotPath is where the shared upstream lists are kept across
+// restarts: the persistent state directory, next to the auth directory.
+func ProviderDiscoverySnapshotPath(authDir string) string {
+	return filepath.Join(util.StateDir(authDir), providerDiscoverySnapshotFile)
+}
+
+// LoadProviderDiscoverySnapshot points the shared discovery store at its file and
+// restores the lists the previous process saved. It must run before the startup
+// registration pass, which registers from them.
+func LoadProviderDiscoverySnapshot(authDir string) (int, error) {
+	modeldiscovery.SetSnapshotPath(ProviderDiscoverySnapshotPath(authDir))
+	return modeldiscovery.LoadSnapshot()
 }
 
 // RefreshProviderDiscovery re-fetches a provider's upstream list for a tenant and

@@ -1,16 +1,18 @@
 package settings
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/configsync"
 	runtimeconfig "github.com/router-for-me/CLIProxyAPI/v6/internal/management/settings/runtimeconfig"
 	log "github.com/sirupsen/logrus"
-	"gopkg.in/yaml.v3"
 )
 
 const createRuntimeSettingsTableSQL = `
@@ -91,31 +93,72 @@ func (s RuntimeSettingsStore) Upsert(key string, value any) error {
 }
 
 // PersistPresentInYAML stores the settings that a raw config.yaml save from
-// the management panel spelled out explicitly. Only keys whose value differs
-// from the stored one are written, each against the version it replaces.
-func (s RuntimeSettingsStore) PersistPresentInYAML(cfg *config.Config, yamlContent []byte) int {
+// the management panel spelled out explicitly, in one transaction: either every
+// key whose value differs from the stored one is written or none is, so a
+// failed save leaves nothing of itself behind for the caller to undo. Each key
+// is checked against the version it replaces. The save is not based on a
+// version the client saw, so when another writer gets in between, the stored
+// values are read again and the set is retried; a conflict is returned only
+// once the retries are used up. On success the written keys are returned and
+// their new versions recorded in cfg's state.
+func (s RuntimeSettingsStore) PersistPresentInYAML(ctx context.Context, cfg *config.Config, yamlContent []byte) ([]string, error) {
 	if s.db == nil || cfg == nil {
-		return 0
+		return nil, nil
 	}
-	present := yamlRootKeys(yamlContent)
+	present := config.YAMLRootKeys(yamlContent)
 	if len(present) == 0 {
-		return 0
+		return nil, nil
 	}
-	persisted := 0
+	var wanted []PendingChange
 	for _, spec := range runtimeconfig.Specs() {
 		if !present[spec.Key] {
 			continue
 		}
-		written, err := s.writeIfChanged(context.Background(), spec, cfg)
+		canonical, err := runtimeconfig.Canonical(spec, cfg)
 		if err != nil {
-			log.Errorf("sqlite/settings: persist runtime setting %s from YAML save: %v", spec.Key, err)
-			continue
+			return nil, fmt.Errorf("encode runtime setting %s: %w", spec.Key, err)
 		}
-		if written {
-			persisted++
+		wanted = append(wanted, PendingChange{Spec: spec, Canonical: canonical})
+	}
+	if len(wanted) == 0 {
+		return nil, nil
+	}
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		var entries map[string]Entry
+		if entries, err = s.LoadAll(); err != nil {
+			return nil, fmt.Errorf("load runtime settings: %w", err)
+		}
+		pending := make([]PendingChange, 0, len(wanted))
+		changes := make([]Change, 0, len(wanted))
+		for _, want := range wanted {
+			if entry, ok := entries[want.Spec.Key]; ok {
+				if stored, canonErr := CanonicalPayload(want.Spec, entry.Payload); canonErr == nil && bytes.Equal(stored, want.Canonical) {
+					continue
+				}
+				want.Expected = entry.Version
+			}
+			pending = append(pending, want)
+			changes = append(changes, Change{Key: want.Spec.Key, Value: want.Spec.Value(cfg), Expected: want.Expected})
+		}
+		if len(changes) == 0 {
+			return nil, nil
+		}
+		var versions map[string]int64
+		if versions, err = s.CompareAndSwap(ctx, changes); err == nil {
+			state := cfg.RuntimeSettingState()
+			keys := make([]string, 0, len(pending))
+			for _, p := range pending {
+				state.Set(p.Spec.Key, config.RuntimeSettingSnapshot{Canonical: p.Canonical, Version: versions[p.Spec.Key]})
+				keys = append(keys, p.Spec.Key)
+			}
+			return keys, nil
+		}
+		if !errors.Is(err, configsync.ErrVersionConflict) {
+			return nil, err
 		}
 	}
-	return persisted
+	return nil, err
 }
 
 // ApplyToConfig overlays every stored setting onto cfg without recording
@@ -185,35 +228,6 @@ func (s RuntimeSettingsStore) MigrateFromConfig(cfg *config.Config) (migrated in
 		}
 	}
 	return migrated, hadStored
-}
-
-func yamlRootKeys(data []byte) map[string]bool {
-	if len(data) == 0 {
-		return nil
-	}
-	var root yaml.Node
-	if err := yaml.Unmarshal(data, &root); err != nil {
-		return nil
-	}
-	if root.Kind != yaml.DocumentNode || len(root.Content) == 0 {
-		return nil
-	}
-	mapping := root.Content[0]
-	if mapping == nil || mapping.Kind != yaml.MappingNode {
-		return nil
-	}
-	keys := make(map[string]bool, len(mapping.Content)/2)
-	for i := 0; i+1 < len(mapping.Content); i += 2 {
-		key := mapping.Content[i]
-		if key == nil || key.Kind != yaml.ScalarNode {
-			continue
-		}
-		name := strings.TrimSpace(key.Value)
-		if name != "" {
-			keys[name] = true
-		}
-	}
-	return keys
 }
 
 func migrateRuntimeSettingsTenantSchema(db *sql.DB) {

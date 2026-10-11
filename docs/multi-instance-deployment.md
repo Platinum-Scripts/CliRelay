@@ -380,6 +380,11 @@ In cluster mode all nodes share one database. Every piece of state that used to 
   - Revoking or deleting an API key rebuilds only the auth map, never the executors, so Codex upstream WebSocket sessions survive.
   - Routing, proxy pool, pricing, model configs, IP rules and tenants each have their own reload path.
 - **Toggles that were YAML-only now live in the database**, shared by all nodes: 14 of them, including `debug`, `request-retry` and `proxy-url`. Node-local settings stay in each node's YAML: port, TLS, `auth-dir`, `postgres`, `redis`, `cluster`, `trusted-proxies`, `auto-update`.
+- **Raw `config.yaml` saves.** A save from the panel's YAML editor is checked and stored before the file is written. A rejected save changes neither the database nor `config.yaml`.
+  - Runtime settings it spells out are stored in one transaction. If that fails, the whole save is rejected: a conflict returns `409 config_version_conflict`; any other failure returns 500.
+  - `routing`, `proxy-pool`, `api-keys`, `api-key-entries` and `api-key-permission-profiles` are not stored from the file once the database holds them. A save that changes one returns `422 config_yaml_database_owned_sections`, naming each section and the page where it is edited. A copy of the stored `routing` or `proxy-pool` passes, and so do the published example API keys. A section the database does not hold yet is still imported, by the reload after the save (`routing`, `proxy-pool`) or by the next start (the others).
+  - If a stored section cannot be read, a save that spells it out returns 500.
+- **Database-owned sections in a hand-edited `config.yaml`** are dropped by the next reload or start, and the stored value stays in effect. A `routing` or `proxy-pool` section that differs from the stored one is logged as a warning. Once the database holds API keys, keys in the file do not authenticate; a reload used to leave them working on that node alone.
 
 ### 6.4 OAuth logins and asynchronous work
 

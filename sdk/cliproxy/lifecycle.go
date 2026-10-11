@@ -93,6 +93,7 @@ func (s *Service) loadInitialState(ctx context.Context) error {
 		// upstreams answer. Fetching starts first so the first live answers overlap
 		// the pass; each re-registers its credentials once it arrives.
 		s.loadModelLists()
+		s.loadProviderDiscovery()
 		s.startProviderDiscovery(ctx)
 		s.startLiveModelLists(ctx)
 		started := time.Now()
