@@ -315,6 +315,27 @@ func (s *Service) refreshRegisteredModelsForProvider(ctx context.Context, tenant
 	}
 }
 
+// loadProviderDiscovery restores the shared upstream lists the previous process
+// saved. It runs before the startup registration pass, so the models only those
+// lists name keep routing even when the first fetch after a restart fails.
+func (s *Service) loadProviderDiscovery() {
+	if s == nil {
+		return
+	}
+	cfg := s.configSnapshot()
+	if cfg == nil {
+		return
+	}
+	restored, err := serviceapp.LoadProviderDiscoverySnapshot(cfg.AuthDir)
+	if err != nil {
+		log.Warnf("model discovery: restoring the saved provider model lists failed: %v", err)
+		return
+	}
+	if restored > 0 {
+		log.Infof("model discovery: restored %d provider model lists saved by the previous process", restored)
+	}
+}
+
 func (s *Service) configSnapshot() *config.Config {
 	s.cfgMu.RLock()
 	defer s.cfgMu.RUnlock()

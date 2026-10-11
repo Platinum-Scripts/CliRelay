@@ -9,6 +9,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/codexclientver"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/runtime/executor"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 	sdkmodelcatalog "github.com/router-for-me/CLIProxyAPI/v6/sdk/modelcatalog"
 	log "github.com/sirupsen/logrus"
@@ -114,7 +115,7 @@ func Warm(ctx context.Context, auth *coreauth.Auth, cfg *config.Config, tenantID
 		// is both listed and callable.
 		codexclientver.Refresh(ctx)
 	}
-	models, err := runFetch(ctx, fetch, auth, cfg)
+	models, err := runFetch(ctx, fetch, auth, CredentialConfig(cfg, auth))
 	ok := err == nil && len(models) > 0
 	if ok {
 		Store(tenantID, provider, models)
@@ -135,6 +136,31 @@ func Warm(ctx context.Context, auth *coreauth.Auth, cfg *config.Config, tenantID
 		return nil, false
 	}
 	return cloneModels(models), true
+}
+
+// tenantRuntimeConfig builds a tenant's configuration. Tests replace it to see
+// which tenant a fetch was configured for without a database.
+var tenantRuntimeConfig = usage.BuildTenantRuntimeConfig
+
+// CredentialConfig returns the configuration a credential's own requests run
+// with: its tenant's, not the system's.
+//
+// A credential names its proxy by ID, and each tenant keeps its own proxy pool.
+// Resolved against the system configuration, the ID reaches the system tenant's
+// entry or no proxy at all. On 2026-10-11 the proxy provider moved its
+// endpoints and three tenants were repointed while the system tenant was not.
+// The same accounts served chat through the new endpoints, while every model
+// list fetch kept dialling the dead one.
+func CredentialConfig(base *config.Config, auth *coreauth.Auth) *config.Config {
+	if base == nil || auth == nil {
+		return base
+	}
+	tenantID := coreauth.NormalizedTenantID(auth.TenantID)
+	if tenantID == coreauth.NormalizedTenantID("") {
+		return base
+	}
+	tenantCfg := tenantRuntimeConfig(base, tenantID)
+	return &tenantCfg
 }
 
 func runFetch(ctx context.Context, fetch Fetcher, auth *coreauth.Auth, cfg *config.Config) ([]*sdkmodelcatalog.ModelInfo, error) {
