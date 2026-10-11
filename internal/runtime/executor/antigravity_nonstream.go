@@ -167,16 +167,17 @@ attemptLoop:
 
 			reporter.setInputContent(string(req.Payload))
 			reopener := antigravityReopener{
-				executor: e,
-				ctx:      execCtx.Context,
-				auth:     auth,
-				token:    token,
-				model:    execCtx.BaseModel,
-				alt:      opts.Alt,
-				payload:  translated,
-				baseURLs: append(append([]string(nil), baseURLs[idx:]...), baseURLs[:idx]...),
-				client:   httpClient,
-				recorder: recorder,
+				executor:          e,
+				ctx:               execCtx.Context,
+				auth:              auth,
+				token:             token,
+				model:             execCtx.BaseModel,
+				alt:               opts.Alt,
+				payload:           translated,
+				baseURLs:          append(append([]string(nil), baseURLs[idx:]...), baseURLs[:idx]...),
+				client:            httpClient,
+				recorder:          recorder,
+				sessionGeneration: sessionGeneration,
 			}
 
 			// Nothing has reached the client yet, so an answer that ends in a
@@ -194,7 +195,7 @@ attemptLoop:
 					break
 				}
 				log.Warnf("antigravity executor: %s for model %s before any output, re-requesting (%d/%d)", geminiFinishMalformedFunctionCall, execCtx.BaseModel, retry+1, antigravityMalformedCallRetries)
-				next, errOpen := reopener.open()
+				next, errOpen := reopener.open() //nolint:bodyclose // collectAntigravityStream closes it on the next pass.
 				if errOpen != nil {
 					log.Warnf("antigravity executor: re-request after %s failed: %v", geminiFinishMalformedFunctionCall, errOpen)
 					break

@@ -111,12 +111,16 @@ type antigravityReopener struct {
 	baseURLs []string
 	client   *http.Client
 	recorder UpstreamRecorder
+	// sessionGeneration is the one the response was opened with. The re-request
+	// must stay on that upstream session: after a rotation past the 1M-token wall,
+	// generation 0 would land on the exhausted session and fail with 400 again.
+	sessionGeneration int
 }
 
 func (r antigravityReopener) open() (*http.Response, error) {
 	var lastErr error
 	for _, baseURL := range r.baseURLs {
-		httpReq, requestBody, errReq := r.executor.buildRequest(r.ctx, r.auth, r.token, r.model, r.payload, true, r.alt, baseURL)
+		httpReq, requestBody, errReq := r.executor.buildRequest(r.ctx, r.auth, r.token, r.model, r.payload, true, r.alt, baseURL, r.sessionGeneration)
 		if errReq != nil {
 			return nil, errReq
 		}

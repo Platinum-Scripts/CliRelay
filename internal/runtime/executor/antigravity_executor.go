@@ -282,16 +282,17 @@ attemptLoop:
 			out := make(chan cliproxyexecutor.StreamChunk)
 			reporter.setInputContent(string(req.Payload))
 			reopener := antigravityReopener{
-				executor: e,
-				ctx:      execCtx.Context,
-				auth:     auth,
-				token:    token,
-				model:    execCtx.BaseModel,
-				alt:      opts.Alt,
-				payload:  translated,
-				baseURLs: append(append([]string(nil), baseURLs[idx:]...), baseURLs[:idx]...),
-				client:   httpClient,
-				recorder: recorder,
+				executor:          e,
+				ctx:               execCtx.Context,
+				auth:              auth,
+				token:             token,
+				model:             execCtx.BaseModel,
+				alt:               opts.Alt,
+				payload:           translated,
+				baseURLs:          append(append([]string(nil), baseURLs[idx:]...), baseURLs[:idx]...),
+				client:            httpClient,
+				recorder:          recorder,
+				sessionGeneration: sessionGeneration,
 			}
 			go func(resp *http.Response) {
 				defer close(out)
