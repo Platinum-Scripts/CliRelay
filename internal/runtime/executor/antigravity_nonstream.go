@@ -50,6 +50,8 @@ func (e *AntigravityExecutor) executeViaStreamEndpoint(ctx context.Context, auth
 
 	attempts := antigravityRetryAttempts(auth, e.cfg)
 	var locationGate antigravityLocationGateBudget
+	sessionGeneration := 0
+	sessionBumpsLeft := antigravitySessionBumpMaxAttempts
 
 attemptLoop:
 	for attempt := 0; attempt < attempts; attempt++ {
@@ -58,7 +60,7 @@ attemptLoop:
 		var lastErr error
 
 		for idx, baseURL := range baseURLs {
-			httpReq, requestBody, errReq := e.buildRequest(execCtx.Context, auth, token, execCtx.BaseModel, translated, true, opts.Alt, baseURL)
+			httpReq, requestBody, errReq := e.buildRequest(execCtx.Context, auth, token, execCtx.BaseModel, translated, true, opts.Alt, baseURL, sessionGeneration)
 			if errReq != nil {
 				err = errReq
 				return resp, err
@@ -113,6 +115,19 @@ attemptLoop:
 				lastStatus = httpResp.StatusCode
 				lastBody = append([]byte(nil), bodyBytes...)
 				lastErr = nil
+				// A long tool-loop eventually pushes the server-side session past
+				// the 1,048,576-token ceiling, after which every request on that
+				// session id fails 400. Rotate the session id and retry on a fresh
+				// upstream session. This is a recovery, not a capacity retry, so it
+				// keeps its own budget (sessionBumpsLeft) and does not consume an
+				// attempt.
+				if sessionBumpsLeft > 0 && antigravityShouldBumpSession(httpResp.StatusCode, bodyBytes) {
+					sessionGeneration++
+					sessionBumpsLeft--
+					attempt--
+					log.Debugf("antigravity executor: session input exceeds the 1M ceiling for model %s, rotating session id (generation %d) and retrying on a fresh session", execCtx.BaseModel, sessionGeneration)
+					continue attemptLoop
+				}
 				// 429 is an account-level RESOURCE_EXHAUSTED signal, not a
 				// host-specific hiccup: see antigravity_executor.go for the
 				// production trace that motivated dropping this fallback.
@@ -150,53 +165,42 @@ attemptLoop:
 				return resp, err
 			}
 
-			out := make(chan cliproxyexecutor.StreamChunk)
 			reporter.setInputContent(string(req.Payload))
-			go func(resp *http.Response) {
-				defer close(out)
-				defer func() {
-					if errClose := resp.Body.Close(); errClose != nil {
-						log.Errorf("antigravity executor: close response body error: %v", errClose)
-					}
-				}()
-				scanner := bufio.NewScanner(resp.Body)
-				scanner.Buffer(nil, streamScannerBuffer)
-				for scanner.Scan() {
-					line := scanner.Bytes()
-					recorder.AppendResponseChunk(line)
-					reporter.appendOutputChunk(line)
+			reopener := antigravityReopener{
+				executor:          e,
+				ctx:               execCtx.Context,
+				auth:              auth,
+				token:             token,
+				model:             execCtx.BaseModel,
+				alt:               opts.Alt,
+				payload:           translated,
+				baseURLs:          append(append([]string(nil), baseURLs[idx:]...), baseURLs[:idx]...),
+				client:            httpClient,
+				recorder:          recorder,
+				sessionGeneration: sessionGeneration,
+			}
 
-					line = FilterSSEUsageMetadata(line)
-
-					payload := jsonPayload(line)
-					if payload == nil {
-						continue
-					}
-
-					if detail, ok := parseAntigravityStreamUsage(payload); ok {
-						reporter.publish(execCtx.Context, detail)
-					}
-
-					out <- cliproxyexecutor.StreamChunk{Payload: payload}
-				}
-				if errScan := scanner.Err(); errScan != nil {
-					recorder.RecordResponseError(errScan)
-					reporter.publishFailure(execCtx.Context)
-					out <- cliproxyexecutor.StreamChunk{Err: errScan}
-				} else {
-					reporter.ensurePublished(execCtx.Context)
-				}
-			}(httpResp)
-
+			// Nothing has reached the client yet, so an answer that ends in a
+			// malformed call before any output is simply discarded and asked again.
 			var buffer bytes.Buffer
-			for chunk := range out {
-				if chunk.Err != nil {
-					return resp, chunk.Err
+			current := httpResp
+			for retry := 0; ; retry++ {
+				buffer.Reset()
+				mayRetry := retry < antigravityMalformedCallRetries
+				malformed, errRead := e.collectAntigravityStream(execCtx, reporter, current, &buffer, mayRetry)
+				if errRead != nil {
+					return resp, errRead
 				}
-				if len(chunk.Payload) > 0 {
-					_, _ = buffer.Write(chunk.Payload)
-					_, _ = buffer.Write([]byte("\n"))
+				if !malformed {
+					break
 				}
+				log.Warnf("antigravity executor: %s for model %s before any output, re-requesting (%d/%d)", geminiFinishMalformedFunctionCall, execCtx.BaseModel, retry+1, antigravityMalformedCallRetries)
+				next, errOpen := reopener.open() //nolint:bodyclose // collectAntigravityStream closes it on the next pass.
+				if errOpen != nil {
+					log.Warnf("antigravity executor: re-request after %s failed: %v", geminiFinishMalformedFunctionCall, errOpen)
+					break
+				}
+				current = next
 			}
 			resp = cliproxyexecutor.Response{Payload: e.convertStreamToNonStream(buffer.Bytes())}
 
@@ -229,10 +233,60 @@ attemptLoop:
 	return resp, err
 }
 
+// collectAntigravityStream reads one upstream SSE response into buffer, one JSON
+// payload per line. With mayRetry set it reports a malformed-call finish that
+// came before any visible output; that answer's usage is not published, since
+// the reporter records once and the retried answer is the one served.
+func (e *AntigravityExecutor) collectAntigravityStream(execCtx *ExecutionContext, reporter *usageReporter, resp *http.Response, buffer *bytes.Buffer, mayRetry bool) (malformed bool, err error) {
+	recorder := execCtx.Recorder()
+	defer func() {
+		if errClose := resp.Body.Close(); errClose != nil {
+			log.Errorf("antigravity executor: close response body error: %v", errClose)
+		}
+	}()
+	var guard geminiMalformedCallGuard
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(nil, streamScannerBuffer)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		recorder.AppendResponseChunk(line)
+		reporter.appendOutputChunk(line)
+
+		line = FilterSSEUsageMetadata(line)
+
+		payload := jsonPayload(line)
+		if payload == nil {
+			continue
+		}
+		if mayRetry && guard.observe(payload) {
+			// Kept in the buffer so the answer still terminates if the retry
+			// cannot be opened; a successful retry resets the buffer.
+			_, _ = buffer.Write(payload)
+			_, _ = buffer.Write([]byte("\n"))
+			return true, nil
+		}
+
+		if detail, ok := parseAntigravityStreamUsage(payload); ok {
+			reporter.publish(execCtx.Context, detail)
+		}
+
+		_, _ = buffer.Write(payload)
+		_, _ = buffer.Write([]byte("\n"))
+	}
+	if errScan := scanner.Err(); errScan != nil {
+		recorder.RecordResponseError(errScan)
+		reporter.publishFailure(execCtx.Context)
+		return false, errScan
+	}
+	reporter.ensurePublished(execCtx.Context)
+	return false, nil
+}
+
 func (e *AntigravityExecutor) convertStreamToNonStream(stream []byte) []byte {
 	responseTemplate := ""
 	var traceID string
 	var finishReason string
+	var finishMessage string
 	var modelVersion string
 	var responseID string
 	var role string
@@ -323,6 +377,7 @@ func (e *AntigravityExecutor) convertStreamToNonStream(stream []byte) []byte {
 
 		if finishResult := responseNode.Get("candidates.0.finishReason"); finishResult.Exists() && finishResult.String() != "" {
 			finishReason = finishResult.String()
+			finishMessage = responseNode.Get("candidates.0.finishMessage").String()
 		}
 
 		if modelResult := responseNode.Get("modelVersion"); modelResult.Exists() && modelResult.String() != "" {
@@ -388,6 +443,9 @@ func (e *AntigravityExecutor) convertStreamToNonStream(stream []byte) []byte {
 	}
 	if finishReason != "" {
 		responseTemplate, _ = sjson.Set(responseTemplate, "candidates.0.finishReason", finishReason)
+		if finishMessage != "" {
+			responseTemplate, _ = sjson.Set(responseTemplate, "candidates.0.finishMessage", finishMessage)
+		}
 	}
 	if modelVersion != "" {
 		responseTemplate, _ = sjson.Set(responseTemplate, "modelVersion", modelVersion)
