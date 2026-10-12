@@ -375,3 +375,54 @@ func TestPutCcSwitchImportConfigsRejectionNamesEveryClientType(t *testing.T) {
 		t.Fatalf("error = %q, want %q", body.Error, want)
 	}
 }
+
+func TestCcSwitchImportConfigsStoreTheExplicitCodexContextWindow(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupPermissionProfilesTestDB(t)
+
+	// The mapping keeps the 128000 placeholder earlier panels wrote everywhere;
+	// the preset's own field is the only context window that is intent.
+	body := []byte(`[
+  {"id": "cfg-codex", "client-type": "codex", "provider-name": "Relay Codex", "default-model": "gpt-5.5",
+   "allowed-channel-groups": ["codex"], "codex-context-window": 200000,
+   "model-mappings": [{"request-model": "gpt-5.5", "target-model": "gpt-5.5", "context-window": 128000}]},
+  {"id": "cfg-claude", "client-type": "claude", "provider-name": "Relay Claude", "default-model": "claude-sonnet-4-5",
+   "allowed-channel-groups": ["claude"], "codex-context-window": 200000}
+]`)
+	h := NewHandler(&config.Config{}, "", nil)
+	putRec := httptest.NewRecorder()
+	putCtx, _ := gin.CreateTestContext(putRec)
+	putCtx.Request = httptest.NewRequest(http.MethodPut, "/ccswitch-import-configs", bytes.NewReader(body))
+	h.PutCcSwitchImportConfigs(putCtx)
+	if putRec.Code != http.StatusOK {
+		t.Fatalf("PUT status = %d; body=%s", putRec.Code, putRec.Body.String())
+	}
+
+	getRec := httptest.NewRecorder()
+	getCtx, _ := gin.CreateTestContext(getRec)
+	getCtx.Request = httptest.NewRequest(http.MethodGet, "/ccswitch-import-configs", nil)
+	h.GetCcSwitchImportConfigs(getCtx)
+	var got struct {
+		Items        []map[string]any `json:"items"`
+		Capabilities map[string]bool  `json:"capabilities"`
+	}
+	if err := json.Unmarshal(getRec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal GET response: %v", err)
+	}
+	if !got.Capabilities["codex-context-window"] {
+		t.Fatalf("capabilities = %#v, want codex-context-window", got.Capabilities)
+	}
+	byID := map[string]map[string]any{}
+	for _, item := range got.Items {
+		byID[item["id"].(string)] = item
+	}
+	if got := byID["cfg-codex"]["codex-context-window"]; got != float64(200000) {
+		t.Fatalf("codex preset codex-context-window = %#v, want 200000", got)
+	}
+	// Only Codex presets carry it, but every row reports the field so the panel
+	// can tell this backend from one that would drop it.
+	value, present := byID["cfg-claude"]["codex-context-window"]
+	if !present || value != float64(0) {
+		t.Fatalf("claude preset codex-context-window = %#v (present %v), want 0", value, present)
+	}
+}

@@ -11,8 +11,8 @@ import (
 
 func TestRuntimeMigrationsCoverCoreTables(t *testing.T) {
 	migrations := RuntimeMigrations()
-	if len(migrations) != 40 {
-		t.Fatalf("RuntimeMigrations len = %d, want 40", len(migrations))
+	if len(migrations) != 41 {
+		t.Fatalf("RuntimeMigrations len = %d, want 41", len(migrations))
 	}
 	// Membership table of multi-instance deployments.
 	if migrations[31].Version != "202609250001_cluster_nodes" {
@@ -57,6 +57,10 @@ func TestRuntimeMigrationsCoverCoreTables(t *testing.T) {
 		!strings.Contains(got.SQL, "CREATE TABLE IF NOT EXISTS platform_resource_grants") ||
 		strings.Contains(got.SQL, "ALTER TABLE") {
 		t.Fatalf("resource grants migration = %q", got.Version)
+	}
+	if got := migrations[40]; got.Version != "202610130002_ccswitch_codex_context_window" ||
+		!strings.Contains(got.SQL, "ADD COLUMN IF NOT EXISTS codex_context_window") {
+		t.Fatalf("ccswitch context window migration = %q", got.Version)
 	}
 	// Appended from laterRuntimeMigrations() because migrations.go sits at its
 	// structure-gate size ceiling.

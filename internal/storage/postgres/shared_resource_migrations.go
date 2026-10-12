@@ -24,3 +24,12 @@ CREATE TABLE IF NOT EXISTS platform_resource_grants (
 CREATE INDEX IF NOT EXISTS idx_platform_resource_grants_tenant
   ON platform_resource_grants (tenant_id, resource_kind);
 `
+
+// ccSwitchCodexContextWindowSQL stores the context window a Codex import
+// preset sets for its default model. It is a new column rather than a reuse
+// of the per-mapping context windows: earlier panels wrote a 128000
+// placeholder into every mapping, which CC Switch never applied, and reading
+// those as intent would cap Codex at 128k on every re-import.
+const ccSwitchCodexContextWindowSQL = `
+ALTER TABLE ccswitch_import_configs ADD COLUMN IF NOT EXISTS codex_context_window INTEGER NOT NULL DEFAULT 0;
+`
