@@ -39,6 +39,8 @@ func laterRuntimeMigrations() []Migration {
 		// Which tenants may use the system tenant's shared proxies and AI
 		// account credentials. See shared_resource_migrations.go.
 		{Version: "202610130001_platform_resource_grants", SQL: platformResourceGrantsSQL},
+		// Explicit Codex context window of a CC Switch import preset.
+		{Version: "202610130002_ccswitch_codex_context_window", SQL: ccSwitchCodexContextWindowSQL},
 	}
 }
 

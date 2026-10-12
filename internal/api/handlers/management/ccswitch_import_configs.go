@@ -24,6 +24,9 @@ func (h *Handler) GetCcSwitchImportConfigs(c *gin.Context) {
 		// offers the apps listed here (and falls back to claude/codex/gemini when
 		// the field is missing).
 		"client-types": usage.CcSwitchClientTypes(),
+		// Fields an older backend would silently drop on PUT; the panel only
+		// offers the matching controls when they are listed as true here.
+		"capabilities": gin.H{"codex-context-window": true},
 	})
 }
 
@@ -59,6 +62,7 @@ func (h *Handler) PutCcSwitchImportConfigs(c *gin.Context) {
 			EndpointPath:         items[idx].EndpointPath,
 			UsageAutoInterval:    items[idx].UsageAutoInterval,
 			APIKeyField:          strings.TrimSpace(items[idx].APIKeyField),
+			CodexContextWindow:   items[idx].CodexContextWindow,
 			CreatedAt:            strings.TrimSpace(items[idx].CreatedAt),
 			UpdatedAt:            strings.TrimSpace(items[idx].UpdatedAt),
 		}
