@@ -21,6 +21,9 @@ type selectionScope struct {
 	// tenantWide drops the implicit "default" group a request without a route
 	// group would otherwise be placed in.
 	tenantWide bool
+	// grants are the system credentials shared with other tenants, captured
+	// once per selection so every candidate is judged against the same set.
+	grants *sharedAuthGrantIndex
 }
 
 func newSelectionScope(cfg *runtimeConfigSnapshot, model string, meta map[string]any) selectionScope {
@@ -107,7 +110,7 @@ func (s selectionScope) allowsCandidate(candidate *Auth, scopedRouteGroup string
 	if candidate == nil || candidate.Disabled || candidate.Status == StatusDisabled {
 		return false
 	}
-	if normalizedTenantID(candidate.TenantID) != s.tenantID {
+	if !authUsableByTenant(candidate, s.tenantID, s.grants) {
 		return false
 	}
 	if s.pinnedAuthID != "" && candidate.ID != s.pinnedAuthID {
@@ -178,21 +181,29 @@ func (m *Manager) pickNextMixed(ctx context.Context, providers []string, model s
 
 func (s selectorService) pickProvider(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, tried map[string]struct{}) (*Auth, ProviderExecutor, error) {
 	scope := newSelectionScope(s.manager.currentRuntimeConfigForTenant(tenantIDFromMetadata(opts.Metadata)), model, opts.Metadata)
+	scope.grants = s.manager.sharedGrantIndex()
 
 	s.manager.mu.RLock()
-	executor := s.manager.executorForTenantLocked(scope.tenantID, provider)
-	okExecutor := executor != nil
-	if !okExecutor {
-		s.manager.mu.RUnlock()
-		return nil, nil, &Error{Code: "executor_not_found", Message: "executor not registered"}
-	}
+	// A tenant with no credential of this provider has no executor for it, yet
+	// may still be served by a system credential shared with it. Every
+	// candidate runs on its owner's executor; see shared_grants.go.
+	tenantHasExecutor := s.manager.executorForTenantLocked(scope.tenantID, provider) != nil
 	selected, _, err := s.pickLocked(ctx, scope, provider, opts, tried, func(candidate *Auth) bool {
-		return candidate != nil && candidate.Provider == provider
+		return candidate != nil && candidate.Provider == provider && s.manager.executorForAuthLocked(candidate, provider) != nil
 	})
 	if err != nil {
+		notServed := !tenantHasExecutor && !s.manager.sharesProviderWithTenantLocked(scope.tenantID, provider, scope.grants)
 		s.manager.mu.RUnlock()
+		if notServed {
+			// Nothing of its own and nothing shared: keep the error a tenant
+			// without this provider has always received. A shared credential
+			// that exists but cannot serve right now (cooldown, model gate)
+			// reports its own reason instead.
+			return nil, nil, &Error{Code: "executor_not_found", Message: "executor not registered"}
+		}
 		return nil, nil, err
 	}
+	executor := s.manager.executorForAuthLocked(selected, provider)
 	authCopy := selected.Clone()
 	s.manager.mu.RUnlock()
 
@@ -201,6 +212,7 @@ func (s selectorService) pickProvider(ctx context.Context, provider, model strin
 
 func (s selectorService) pickMixed(ctx context.Context, providers []string, model string, opts cliproxyexecutor.Options, tried map[string]struct{}) (*Auth, ProviderExecutor, string, error) {
 	scope := newSelectionScope(s.manager.currentRuntimeConfigForTenant(tenantIDFromMetadata(opts.Metadata)), model, opts.Metadata)
+	scope.grants = s.manager.sharedGrantIndex()
 	providerSet := make(map[string]struct{}, len(providers))
 	for _, provider := range providers {
 		p := strings.TrimSpace(strings.ToLower(provider))
@@ -225,7 +237,7 @@ func (s selectorService) pickMixed(ctx context.Context, providers []string, mode
 		if _, ok := providerSet[providerKey]; !ok {
 			return false
 		}
-		if s.manager.executorForTenantLocked(scope.tenantID, providerKey) == nil {
+		if s.manager.executorForAuthLocked(candidate, providerKey) == nil {
 			return false
 		}
 		return true
@@ -236,7 +248,7 @@ func (s selectorService) pickMixed(ctx context.Context, providers []string, mode
 	}
 
 	providerKey := strings.TrimSpace(strings.ToLower(selected.Provider))
-	executor := s.manager.executorForTenantLocked(scope.tenantID, providerKey)
+	executor := s.manager.executorForAuthLocked(selected, providerKey)
 	okExecutor := executor != nil
 	if !okExecutor {
 		s.manager.mu.RUnlock()

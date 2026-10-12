@@ -36,6 +36,9 @@ func laterRuntimeMigrations() []Migration {
 		{Version: "202609250006_async_task_routes", SQL: asyncTaskRoutesSQL},
 		{Version: "202609250007_management_jobs", SQL: managementJobsSQL},
 		{Version: "202609250008_warmup_policies", SQL: warmupPoliciesSQL},
+		// Which tenants may use the system tenant's shared proxies and AI
+		// account credentials. See shared_resource_migrations.go.
+		{Version: "202610130001_platform_resource_grants", SQL: platformResourceGrantsSQL},
 	}
 }
 

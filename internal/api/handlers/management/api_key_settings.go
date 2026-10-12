@@ -51,7 +51,8 @@ func (h *Handler) apiKeySettingsForTenant(tenantID string, extra ...apikeysettin
 
 	var auths []*coreauth.Auth
 	if h.authManager != nil {
-		auths = h.authManager.ListForTenant(tenantID)
+		// A key may be limited to a shared platform credential's channel.
+		auths = h.authManager.ListUsableForTenant(tenantID)
 	}
 
 	routingCfg := currentRoutingConfigForTenant(h.cfg, tenantID)

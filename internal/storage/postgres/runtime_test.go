@@ -11,8 +11,8 @@ import (
 
 func TestRuntimeMigrationsCoverCoreTables(t *testing.T) {
 	migrations := RuntimeMigrations()
-	if len(migrations) != 39 {
-		t.Fatalf("RuntimeMigrations len = %d, want 39", len(migrations))
+	if len(migrations) != 40 {
+		t.Fatalf("RuntimeMigrations len = %d, want 40", len(migrations))
 	}
 	// Membership table of multi-instance deployments.
 	if migrations[31].Version != "202609250001_cluster_nodes" {
@@ -50,6 +50,13 @@ func TestRuntimeMigrationsCoverCoreTables(t *testing.T) {
 		if got.Version != want.version || !strings.Contains(got.SQL, want.table) {
 			t.Fatalf("migration %d = %q, want %q creating %q", 35+i, got.Version, want.version, want.table)
 		}
+	}
+	// Grants of the system tenant's shared proxies and credentials. A new
+	// table only; proxy_pool and auth_credentials keep their shape.
+	if got := migrations[39]; got.Version != "202610130001_platform_resource_grants" ||
+		!strings.Contains(got.SQL, "CREATE TABLE IF NOT EXISTS platform_resource_grants") ||
+		strings.Contains(got.SQL, "ALTER TABLE") {
+		t.Fatalf("resource grants migration = %q", got.Version)
 	}
 	// Appended from laterRuntimeMigrations() because migrations.go sits at its
 	// structure-gate size ceiling.
