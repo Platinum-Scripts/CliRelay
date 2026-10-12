@@ -467,3 +467,32 @@ func sameStrings(a, b []string) bool {
 	}
 	return true
 }
+
+func TestFilterModelsForCcSwitchRouteListsRequestNamesForOpenAIProtocolApps(t *testing.T) {
+	models := []map[string]interface{}{
+		{"id": "deepseek-chat", "object": "model", "owned_by": "deepseek"},
+		{"id": "kimi-k2", "object": "model", "owned_by": "moonshot"},
+	}
+	mappings := []internalrouting.CcSwitchModelMapping{
+		{RequestModel: "gpt-5.4", TargetModel: "deepseek-chat"},
+		{RequestModel: "kimi-k2", TargetModel: "kimi-k2"},
+	}
+	for _, clientType := range []string{"opencode", "openclaw", "hermes"} {
+		route := &internalrouting.PathRouteContext{
+			CcSwitch: &internalrouting.CcSwitchRouteContext{ClientType: clientType, DefaultModel: "kimi-k2", ModelMappings: mappings},
+		}
+		got := modelIDs(filterModelsForCcSwitchRoute(models, route))
+		if want := []string{"gpt-5.4", "kimi-k2"}; !sameStrings(got, want) {
+			t.Fatalf("%s model ids = %#v, want %#v", clientType, got, want)
+		}
+	}
+
+	// Gemini CLI never has its request rewritten, so it keeps seeing the real ids.
+	route := &internalrouting.PathRouteContext{
+		CcSwitch: &internalrouting.CcSwitchRouteContext{ClientType: "gemini", DefaultModel: "kimi-k2", ModelMappings: mappings},
+	}
+	got := modelIDs(filterModelsForCcSwitchRoute(models, route))
+	if want := []string{"deepseek-chat", "kimi-k2"}; !sameStrings(got, want) {
+		t.Fatalf("gemini model ids = %#v, want %#v", got, want)
+	}
+}

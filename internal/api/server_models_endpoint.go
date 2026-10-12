@@ -383,8 +383,10 @@ func filterModelsForCcSwitchRoute(models []map[string]interface{}, route *intern
 	if route == nil || route.CcSwitch == nil {
 		return models
 	}
-	if strings.EqualFold(strings.TrimSpace(route.CcSwitch.ClientType), "codex") {
-		return filterCodexModelsForCcSwitchRoute(models, route.CcSwitch)
+	// OpenAI-protocol apps send the request names and the route rewrites them
+	// (ccSwitchOpenAIModelMapping), so they are offered the request names.
+	if usage.CcSwitchClientUsesOpenAIProtocol(route.CcSwitch.ClientType) {
+		return filterRequestModelsForCcSwitchRoute(models, route.CcSwitch)
 	}
 	return filterTargetModelsForCcSwitchRoute(models, route.CcSwitch)
 }
@@ -414,7 +416,7 @@ func filterTargetModelsForCcSwitchRoute(models []map[string]interface{}, ccSwitc
 	return filtered
 }
 
-func filterCodexModelsForCcSwitchRoute(models []map[string]interface{}, ccSwitch *internalrouting.CcSwitchRouteContext) []map[string]interface{} {
+func filterRequestModelsForCcSwitchRoute(models []map[string]interface{}, ccSwitch *internalrouting.CcSwitchRouteContext) []map[string]interface{} {
 	targetToRequests := make(map[string][]string)
 	for _, mapping := range ccSwitch.ModelMappings {
 		request := strings.TrimSpace(mapping.RequestModel)
