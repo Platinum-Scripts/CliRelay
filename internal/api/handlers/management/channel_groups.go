@@ -418,7 +418,8 @@ func (h *Handler) GetChannelGroups(c *gin.Context) {
 	tenantID := effectiveTenantID(c)
 	var auths []*coreauth.Auth
 	if h != nil && h.authManager != nil {
-		auths = h.authManager.ListForTenant(tenantID)
+		// Shared platform credentials join this tenant's groups like its own.
+		auths = h.authManager.ListUsableForTenant(tenantID)
 	}
 	cfg := h.cfg
 	if tenantID != identity.SystemTenantID {

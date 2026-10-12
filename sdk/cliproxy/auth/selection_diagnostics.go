@@ -73,7 +73,7 @@ func (s selectorService) diagnoseEmptyCandidates(
 		if candidate == nil || candidate.Disabled || candidate.Status == StatusDisabled {
 			continue
 		}
-		if normalizedTenantID(candidate.TenantID) != scope.tenantID {
+		if !authUsableByTenant(candidate, scope.tenantID, scope.grants) {
 			continue
 		}
 		if includeCandidate != nil && !includeCandidate(candidate) {

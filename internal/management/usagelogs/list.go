@@ -965,7 +965,7 @@ func (s *Service) buildNameMaps() nameMaps {
 	var legacyCandidates []legacyChannelCandidate
 
 	if s.authManager != nil {
-		for _, auth := range s.authManager.ListForTenant(s.tenantID) {
+		for _, auth := range s.authManager.ListUsableForTenant(s.tenantID) { // incl. shared platform credentials
 			if auth == nil {
 				continue
 			}

@@ -25,6 +25,10 @@ const (
 	DomainIPAccessRules      = "ip_access_rules"
 	DomainTenants            = "tenants"
 	DomainCcSwitch           = "ccswitch"
+	// DomainResourceGrants covers which tenants may use the system tenant's
+	// shared proxies and AI account credentials. It is always announced under
+	// the system tenant, which owns every shared resource.
+	DomainResourceGrants = "resource_grants"
 )
 
 // systemTenantID mirrors identity.SystemTenantID. It is duplicated rather than

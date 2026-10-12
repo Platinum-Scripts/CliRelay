@@ -202,7 +202,7 @@ func (h *Handler) importCredential(c *gin.Context, provider string) {
 	// from a callback goroutine), so the tenant/proxy binding is read straight
 	// from the request here.
 	tenantID := effectiveTenantID(c)
-	proxyURL := h.cfg.ResolveProxyURL(strings.TrimSpace(payload.ProxyID), "")
+	proxyURL := h.resolveTenantProxyURL(tenantID, payload.ProxyID)
 
 	ctx, cancel := context.WithTimeout(requestAuthContext(c), credentialImportTimeout)
 	defer cancel()

@@ -189,6 +189,10 @@ type Manager struct {
 	// request-time routing and alias resolution.
 	runtimeConfig atomic.Value
 
+	// sharedAuthGrants holds which system credentials other tenants may use;
+	// see shared_grants.go.
+	sharedAuthGrants atomic.Pointer[sharedAuthGrantIndex]
+
 	// Optional HTTP RoundTripper provider injected by host.
 	rtProvider RoundTripperProvider
 

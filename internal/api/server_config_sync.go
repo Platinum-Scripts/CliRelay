@@ -97,7 +97,8 @@ func (s *Server) configSyncHandlers() map[string]configsync.Handler {
 		configsync.DomainIPAccessRules: func(ctx context.Context, _ []cluster.ConfigEvent) error {
 			return ipaccess.Default().Refresh(ctx)
 		},
-		configsync.DomainTenants: s.reloadTenants,
+		configsync.DomainTenants:        s.reloadTenants,
+		configsync.DomainResourceGrants: s.reloadResourceGrants,
 	}
 }
 
@@ -214,6 +215,24 @@ func (s *Server) reloadProxyPool(_ context.Context, events []cluster.ConfigEvent
 		}
 		manager.SetConfig(cfg)
 		internalserviceapp.SyncConfigDerivedAuthsForTenantInPlace(cfg, manager, identity.SystemTenantID)
+		// The system pool is also the platform's shared pool: tenants granted an
+		// entry that changed resolve it from their own bound copy.
+		internalserviceapp.RefreshSharedProxyPools(cfg, manager)
+	}
+	return nil
+}
+
+// reloadResourceGrants applies a change to what the system tenant shares:
+// credential grants take effect on the next selection, proxy grants through
+// a rebind of the tenants whose effective pool changed.
+func (s *Server) reloadResourceGrants(_ context.Context, _ []cluster.ConfigEvent) error {
+	manager := s.coreManager()
+	if manager == nil {
+		return nil
+	}
+	internalserviceapp.LoadSharedAuthGrants(manager)
+	if base := s.liveConfig(nil); base != nil {
+		internalserviceapp.RefreshSharedProxyPools(base, manager)
 	}
 	return nil
 }
@@ -393,5 +412,8 @@ func (s *Server) fullConfigReload(ctx context.Context) error {
 	if err := s.reloadAccessProviders(); err != nil {
 		return err
 	}
-	return s.reloadTenants(ctx, nil)
+	if err := s.reloadTenants(ctx, nil); err != nil {
+		return err
+	}
+	return s.reloadResourceGrants(ctx, nil)
 }

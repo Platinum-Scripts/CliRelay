@@ -26,7 +26,7 @@ func TestRegisterManagementRouteTable(t *testing.T) {
 		routes[key] = route
 	}
 
-	if got, want := len(routes), 344; got != want {
+	if got, want := len(routes), 347; got != want {
 		t.Fatalf("route count = %d, want %d", got, want)
 	}
 	if got, want := sortedRouteKeys(routes), expectedManagementRoutes(); !slices.Equal(got, want) {
@@ -482,6 +482,7 @@ func expectedManagementRoutes() []string {
 		"POST /v0/management/ollama-cloud-api-key/usage",
 		"POST /v0/management/opencode-go-api-key/usage",
 		"POST /v0/management/proxy-pool/check",
+		"POST /v0/management/proxy-pool/:id/adopt",
 		"POST /v0/management/public/ccswitch-import-configs",
 		"POST /v0/management/public/usage",
 		"POST /v0/management/public/usage/chart-data",
@@ -495,6 +496,8 @@ func expectedManagementRoutes() []string {
 		"POST /v0/management/update/apply",
 		"POST /v0/management/vertex/import",
 		"POST /v0/management/video-generation/test",
+		"PUT /v0/management/auth-files/sharing",
+		"PUT /v0/management/proxy-pool/:id/sharing",
 		"PUT /v0/management/ampcode/force-model-mappings",
 		"PUT /v0/management/ampcode/model-mappings",
 		"PUT /v0/management/ampcode/restrict-management-to-localhost",

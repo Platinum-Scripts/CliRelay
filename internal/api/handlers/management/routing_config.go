@@ -57,7 +57,9 @@ func (h *Handler) GetRoutingConfig(c *gin.Context) {
 	tenantID := effectiveTenantID(c)
 	var auths []*coreauth.Auth
 	if h != nil && h.authManager != nil {
-		auths = h.authManager.ListForTenant(tenantID)
+		// Shared platform credentials take part in this tenant's routing, so
+		// their channel names are this tenant's to reference.
+		auths = h.authManager.ListUsableForTenant(tenantID)
 	}
 	routing := currentRoutingConfigForTenant(h.cfg, tenantID)
 	_, version := usage.GetRoutingConfigWithVersionForTenant(tenantID)
@@ -89,7 +91,7 @@ func (h *Handler) PutRoutingConfig(c *gin.Context) {
 
 	var auths []*coreauth.Auth
 	if h != nil && h.authManager != nil {
-		auths = h.authManager.ListForTenant(tenantID)
+		auths = h.authManager.ListUsableForTenant(tenantID)
 	}
 	if known, err := collectKnownChannels(h.cfg, auths, ""); err == nil {
 		candidate.Routing = canonicalizeRoutingConfigChannels(candidate.Routing, known)
