@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/accesspolicy"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/diagnostics"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/quota"
 	"github.com/router-for-me/CLIProxyAPI/v6/sdk/api/handlers"
@@ -36,10 +37,15 @@ type quotaPolicy struct {
 	dailySpendingLimit float64
 	accountPeriod      quota.PeriodSpendingLimits
 	keyPeriod          quota.PeriodSpendingLimits
+
+	// access 是这把 Key 的结构化访问策略；没有使用新能力的 Key 为 nil。
+	access *accesspolicy.Policy
+	// usage 缓存本次准入读到的用量快照，总额度检查与模型策略检查共用。
+	usage *policyUsage
 }
 
 func parseQuotaPolicy(apiKey string, metadata map[string]string) quotaPolicy {
-	return quotaPolicy{
+	policy := quotaPolicy{
 		apiKey:             apiKey,
 		subject:            quotaSubjectKey(apiKey, metadata),
 		endUserID:          strings.TrimSpace(metadata["end-user-id"]),
@@ -55,11 +61,17 @@ func parseQuotaPolicy(apiKey string, metadata map[string]string) quotaPolicy {
 		accountPeriod:      parsePeriodLimitsMetadata(metadata, "account-period-spending-limit-"),
 		keyPeriod:          parsePeriodLimitsMetadata(metadata, "key-period-spending-limit-"),
 	}
+	if access := accesspolicy.Lookup(apiKey); access != nil {
+		policy.access = access
+		policy.usage = newPolicyUsage(access)
+	}
+	return policy
 }
 
 func (p *quotaPolicy) hasLimits() bool {
 	return p.dailyLimit > 0 || p.totalQuota > 0 || p.concurrencyLimit > 0 || p.rpmLimit > 0 || p.tpmLimit > 0 ||
-		p.spendingLimit > 0 || p.dailySpendingLimit > 0 || hasPeriodLimits(p.accountPeriod) || hasPeriodLimits(p.keyPeriod)
+		p.spendingLimit > 0 || p.dailySpendingLimit > 0 || hasPeriodLimits(p.accountPeriod) || hasPeriodLimits(p.keyPeriod) ||
+		p.hasPolicyCells()
 }
 
 // record publishes the limits to the request diagnostics and caches the RPM/TPM
@@ -236,7 +248,7 @@ func (p *quotaPolicy) checkBudgets() *quotaVerdict {
 			return verdict
 		}
 	}
-	return nil
+	return p.checkPolicyCells()
 }
 
 func configuredPeriodVerdict(scope string, limits quota.PeriodSpendingLimits, used quota.PeriodSpendingUsage) *quotaVerdict {

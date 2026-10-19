@@ -165,7 +165,14 @@ func (h *Handler) GetPortalMe(c *gin.Context) {
 	if !ok {
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"user": user})
+	// The portal shows the limits its keys run under, so it must see the
+	// profile-applied values, not the raw account row: a bound account used to
+	// read "unlimited" here while the gateway enforced its profile.
+	if err := decorateEndUser(&user); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"user": user, "capabilities": accessPolicyCapabilities()})
 }
 
 func (h *Handler) PutPortalPassword(c *gin.Context) {

@@ -181,6 +181,27 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 			}
 			releaseQuota = release
 		}
+		// The account's model routes and per-model quotas, as the model policy
+		// middleware applies them to a POST. They run before the model gate so the
+		// gate judges the model the turn will actually use, which is also the model
+		// the turn is billed under.
+		if policyGate := handlers.ModelPolicyGateFromGin(c); policyGate != nil {
+			finalModel, rejection := policyGate(modelName)
+			if rejection != nil {
+				releaseQuota()
+				refusal := &interfaces.ErrorMessage{StatusCode: rejection.StatusCode, Error: rejection, Addon: rejection.Headers}
+				if !h.refuseResponsesWebsocketTurn(c, conn, refusal, &wsBodyLog, "turn refused by model quota", passthroughSessionID) {
+					return
+				}
+				continue
+			}
+			if finalModel != "" && finalModel != modelName {
+				if rewritten, errSet := sjson.SetBytes(requestJSON, "model", finalModel); errSet == nil {
+					requestJSON = rewritten
+					modelName = finalModel
+				}
+			}
+		}
 		// The HTTP middleware could not see this model: it ran on the upgrade
 		// request, which has no body. Apply its verdict here, per turn, so a
 		// disabled or not-allowed model is refused on WebSocket exactly as on POST.

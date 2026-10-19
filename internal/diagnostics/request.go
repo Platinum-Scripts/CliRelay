@@ -34,36 +34,38 @@ type RequestDiagnostic struct {
 	ContentType    string
 	ContentLength  int64
 
-	Route    *RouteSnapshot
-	Auth     *AuthSnapshot
-	Quota    *QuotaSnapshot
-	Upstream *UpstreamSnapshot
-	Egress   map[string]any
-	Response *ResponseSnapshot
-	Body     *BodySnapshot
+	Route       *RouteSnapshot
+	Auth        *AuthSnapshot
+	Quota       *QuotaSnapshot
+	ModelPolicy *ModelPolicySnapshot
+	Upstream    *UpstreamSnapshot
+	Egress      map[string]any
+	Response    *ResponseSnapshot
+	Body        *BodySnapshot
 }
 
 type Snapshot struct {
-	RequestID      string            `json:"request_id,omitempty"`
-	Method         string            `json:"method,omitempty"`
-	OriginalURL    string            `json:"original_url,omitempty"`
-	EffectiveURL   string            `json:"effective_url,omitempty"`
-	OriginalPath   string            `json:"original_path,omitempty"`
-	EffectivePath  string            `json:"effective_path,omitempty"`
-	Host           string            `json:"host,omitempty"`
-	RemoteAddr     string            `json:"remote_addr,omitempty"`
-	ClientIP       string            `json:"client_ip,omitempty"`
-	ClientIPSource string            `json:"client_ip_source,omitempty"`
-	UserAgent      string            `json:"user_agent,omitempty"`
-	ContentType    string            `json:"content_type,omitempty"`
-	ContentLength  int64             `json:"content_length,omitempty"`
-	Route          *RouteSnapshot    `json:"route,omitempty"`
-	Auth           *AuthSnapshot     `json:"auth,omitempty"`
-	Quota          *QuotaSnapshot    `json:"quota,omitempty"`
-	Upstream       *UpstreamSnapshot `json:"upstream,omitempty"`
-	Egress         map[string]any    `json:"egress,omitempty"`
-	Response       *ResponseSnapshot `json:"response,omitempty"`
-	Body           *BodySnapshot     `json:"body,omitempty"`
+	RequestID      string               `json:"request_id,omitempty"`
+	Method         string               `json:"method,omitempty"`
+	OriginalURL    string               `json:"original_url,omitempty"`
+	EffectiveURL   string               `json:"effective_url,omitempty"`
+	OriginalPath   string               `json:"original_path,omitempty"`
+	EffectivePath  string               `json:"effective_path,omitempty"`
+	Host           string               `json:"host,omitempty"`
+	RemoteAddr     string               `json:"remote_addr,omitempty"`
+	ClientIP       string               `json:"client_ip,omitempty"`
+	ClientIPSource string               `json:"client_ip_source,omitempty"`
+	UserAgent      string               `json:"user_agent,omitempty"`
+	ContentType    string               `json:"content_type,omitempty"`
+	ContentLength  int64                `json:"content_length,omitempty"`
+	Route          *RouteSnapshot       `json:"route,omitempty"`
+	Auth           *AuthSnapshot        `json:"auth,omitempty"`
+	Quota          *QuotaSnapshot       `json:"quota,omitempty"`
+	ModelPolicy    *ModelPolicySnapshot `json:"model_policy,omitempty"`
+	Upstream       *UpstreamSnapshot    `json:"upstream,omitempty"`
+	Egress         map[string]any       `json:"egress,omitempty"`
+	Response       *ResponseSnapshot    `json:"response,omitempty"`
+	Body           *BodySnapshot        `json:"body,omitempty"`
 }
 
 type RouteSnapshot struct {
@@ -504,6 +506,7 @@ func (d *RequestDiagnostic) Snapshot() Snapshot {
 		Route:          cloneRoute(d.Route),
 		Auth:           cloneAuth(d.Auth),
 		Quota:          cloneQuota(d.Quota),
+		ModelPolicy:    cloneModelPolicy(d.ModelPolicy),
 		Upstream:       cloneUpstream(d.Upstream),
 		Egress:         cloneAnyMap(d.Egress),
 		Response:       cloneResponse(d.Response),
@@ -532,6 +535,7 @@ func (s Snapshot) IsZero() bool {
 		s.Route == nil &&
 		s.Auth == nil &&
 		s.Quota == nil &&
+		s.ModelPolicy == nil &&
 		s.Upstream == nil &&
 		s.Egress == nil &&
 		s.Response == nil &&

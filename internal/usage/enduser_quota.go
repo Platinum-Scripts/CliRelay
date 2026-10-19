@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/quota"
+	log "github.com/sirupsen/logrus"
 )
 
 // EndUserQuota is the account-level limit/permission snapshot used by auth + quota.
@@ -30,6 +31,27 @@ type EndUserQuota struct {
 	AllowedChannels      []string
 	AllowedChannelGroups []string
 	SystemPrompt         string
+	// AccessPolicy 是 access_policy 列：固定列之外的额度格子、按模型规则与模型路由。
+	AccessPolicy quota.AccessPolicy
+}
+
+// QuotaMatrix 返回账号的完整总额度矩阵：固定列与策略格子合成，模板覆盖后调用即为生效值。
+func (q EndUserQuota) QuotaMatrix() quota.Matrix {
+	period := q.PeriodSpendingLimits
+	period.Day = q.DailySpendingLimit
+	return quota.AccountColumnLayout.MatrixFromColumns(quota.ColumnValues{
+		Period: period, LifetimeCost: q.SpendingLimit, DailyRequests: q.DailyLimit, TotalRequests: q.TotalQuota,
+	}, q.AccessPolicy.Limits)
+}
+
+func decodeEndUserAccessPolicy(endUserID, raw string) quota.AccessPolicy {
+	policy, err := quota.DecodeAccessPolicy(raw)
+	if err != nil {
+		// 写入路径一律先校验再序列化，读到坏数据只可能是手工改库；记下来，按空策略继续，
+		// 固定列上的额度仍然生效。
+		log.WithError(err).Errorf("usage: end user %s has an unreadable access_policy", endUserID)
+	}
+	return policy
 }
 
 func decodeQuotaStringList(raw string) []string {
@@ -56,6 +78,7 @@ func GetEndUserQuota(endUserID string) *EndUserQuota {
 	}
 	var q EndUserQuota
 	var modelsJSON, channelsJSON, groupsJSON string
+	policyJSON := "{}"
 	err := db.QueryRow(`
 		SELECT id, tenant_id, display_name, COALESCE(status, 'active'),
 			COALESCE(permission_profile_id, ''), COALESCE(daily_limit, 0), COALESCE(total_quota, 0),
@@ -63,14 +86,14 @@ func GetEndUserQuota(endUserID string) *EndUserQuota {
 			COALESCE(five_hour_spending_limit, 0), COALESCE(weekly_spending_limit, 0), COALESCE(monthly_spending_limit, 0),
 			COALESCE(concurrency_limit, 0), COALESCE(rpm_limit, 0), COALESCE(tpm_limit, 0),
 			COALESCE(allowed_models, '[]'), COALESCE(allowed_channels, '[]'), COALESCE(allowed_channel_groups, '[]'),
-			COALESCE(system_prompt, '')
+			COALESCE(system_prompt, ''), COALESCE(access_policy, '{}')
 		FROM end_users WHERE id = ?
 	`, endUserID).Scan(
 		&q.ID, &q.TenantID, &q.DisplayName, &q.Status,
 		&q.PermissionProfileID, &q.DailyLimit, &q.TotalQuota,
 		&q.SpendingLimit, &q.DailySpendingLimit,
 		&q.PeriodSpendingLimits.FiveHour, &q.PeriodSpendingLimits.Week, &q.PeriodSpendingLimits.Month, &q.ConcurrencyLimit, &q.RPMLimit, &q.TPMLimit,
-		&modelsJSON, &channelsJSON, &groupsJSON, &q.SystemPrompt,
+		&modelsJSON, &channelsJSON, &groupsJSON, &q.SystemPrompt, &policyJSON,
 	)
 	if err != nil && strings.Contains(strings.ToLower(err.Error()), "no such column") {
 		err = db.QueryRow(`
@@ -96,6 +119,7 @@ func GetEndUserQuota(endUserID string) *EndUserQuota {
 	q.AllowedModels = decodeQuotaStringList(modelsJSON)
 	q.AllowedChannels = decodeQuotaStringList(channelsJSON)
 	q.AllowedChannelGroups = decodeQuotaStringList(groupsJSON)
+	q.AccessPolicy = decodeEndUserAccessPolicy(q.ID, policyJSON)
 	return &q
 }
 
@@ -353,6 +377,7 @@ func EnsureEndUserQuotaColumns(db *sql.DB) error {
 		{"allowed_channels", "TEXT NOT NULL DEFAULT '[]'"},
 		{"allowed_channel_groups", "TEXT NOT NULL DEFAULT '[]'"},
 		{"system_prompt", "TEXT NOT NULL DEFAULT ''"},
+		{"access_policy", "TEXT NOT NULL DEFAULT '{}'"},
 	} {
 		if _, err := db.Exec("ALTER TABLE end_users ADD COLUMN " + col.name + " " + col.def); err != nil {
 			if !strings.Contains(strings.ToLower(err.Error()), "duplicate") {
@@ -390,19 +415,19 @@ func ListEndUserQuotasByIDs(endUserIDs []string) (map[string]EndUserQuota, error
 				COALESCE(five_hour_spending_limit, 0), COALESCE(weekly_spending_limit, 0), COALESCE(monthly_spending_limit, 0),
 				COALESCE(concurrency_limit, 0), COALESCE(rpm_limit, 0), COALESCE(tpm_limit, 0),
 				COALESCE(allowed_models, '[]'), COALESCE(allowed_channels, '[]'), COALESCE(allowed_channel_groups, '[]'),
-				COALESCE(system_prompt, '')
+				COALESCE(system_prompt, ''), COALESCE(access_policy, '{}')
 			FROM end_users WHERE id IN (`+placeholders(len(chunk))+`)`, stringsToAny(chunk)...)
 		if err != nil {
 			return nil, err
 		}
 		for rows.Next() {
 			var q EndUserQuota
-			var modelsJSON, channelsJSON, groupsJSON string
+			var modelsJSON, channelsJSON, groupsJSON, policyJSON string
 			if err := rows.Scan(&q.ID, &q.TenantID, &q.DisplayName, &q.Status,
 				&q.PermissionProfileID, &q.DailyLimit, &q.TotalQuota, &q.SpendingLimit, &q.DailySpendingLimit,
 				&q.PeriodSpendingLimits.FiveHour, &q.PeriodSpendingLimits.Week, &q.PeriodSpendingLimits.Month,
 				&q.ConcurrencyLimit, &q.RPMLimit, &q.TPMLimit,
-				&modelsJSON, &channelsJSON, &groupsJSON, &q.SystemPrompt); err != nil {
+				&modelsJSON, &channelsJSON, &groupsJSON, &q.SystemPrompt, &policyJSON); err != nil {
 				_ = rows.Close()
 				return nil, err
 			}
@@ -410,6 +435,7 @@ func ListEndUserQuotasByIDs(endUserIDs []string) (map[string]EndUserQuota, error
 			q.AllowedModels = decodeQuotaStringList(modelsJSON)
 			q.AllowedChannels = decodeQuotaStringList(channelsJSON)
 			q.AllowedChannelGroups = decodeQuotaStringList(groupsJSON)
+			q.AccessPolicy = decodeEndUserAccessPolicy(q.ID, policyJSON)
 			out[q.ID] = q
 		}
 		if err := rows.Close(); err != nil {
@@ -449,6 +475,9 @@ func EffectiveEndUserQuotaWithProfiles(q EndUserQuota, profiles []APIKeyPermissi
 		q.AllowedChannels = append([]string(nil), profile.AllowedChannels...)
 		q.AllowedChannelGroups = append([]string(nil), profile.AllowedChannelGroups...)
 		q.SystemPrompt = profile.SystemPrompt
+		// 模板的策略整体生效（额度格子、规则、路由）。累计消费不在模板里，仍取账号的
+		// spending_limit 列，所以这里不需要特殊处理。
+		q.AccessPolicy = profile.AccessPolicy.Clone()
 		return q
 	}
 	return q

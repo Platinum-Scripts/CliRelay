@@ -224,6 +224,12 @@ func modelInSet(model string, allowed map[string]struct{}) bool {
 	return ok
 }
 
+// modelPolicyEffectiveModel 给模型策略中间件用：账号/Key 的路由与按模型额度按
+// CC Switch 预设映射之后的模型判定，与模型门控看待模型的方式一致。
+func (s *Server) modelPolicyEffectiveModel(c *gin.Context, requested string) string {
+	return mapCcSwitchRequestModelForRestriction(requested, pathRouteContextFromGin(c))
+}
+
 func mapCcSwitchRequestModelForRestriction(model string, route *internalrouting.PathRouteContext) string {
 	model = strings.TrimSpace(model)
 	if model == "" || route == nil || route.CcSwitch == nil {
