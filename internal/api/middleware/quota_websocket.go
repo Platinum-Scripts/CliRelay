@@ -52,8 +52,13 @@ func admitWebsocketHandshake(c *gin.Context) {
 // POST, the turn counts toward RPM whether or not it is admitted.
 func (p quotaPolicy) turnGate() handlers.QuotaGate {
 	return func() (func(), *handlers.QuotaRejection) {
-		p.countRequest()
-		release, verdict := p.admit()
+		turn := p
+		// 每一轮都要读到最新用量，不能沿用握手或上一轮的快照。
+		if turn.access != nil {
+			turn.usage = newPolicyUsage(turn.access)
+		}
+		turn.countRequest()
+		release, verdict := turn.admit()
 		if verdict != nil {
 			return nil, verdict.forTurn()
 		}

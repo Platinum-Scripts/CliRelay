@@ -10,7 +10,7 @@
     "baseline_above_800": [
       {
         "path": "internal/enduser/service.go",
-        "max_lines": 1147
+        "max_lines": 987
       },
       {
         "path": "internal/identity/service.go",
@@ -26,11 +26,11 @@
       },
       {
         "path": "internal/management/usagelogs/list.go",
-        "max_lines": 1198
+        "max_lines": 1169
       },
       {
         "path": "internal/storage/sqlstore/apikey/store.go",
-        "max_lines": 1176
+        "max_lines": 1034
       },
       {
         "path": "internal/storage/sqlstore/modelconfig/store.go",

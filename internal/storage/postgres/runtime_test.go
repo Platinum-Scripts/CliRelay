@@ -11,8 +11,8 @@ import (
 
 func TestRuntimeMigrationsCoverCoreTables(t *testing.T) {
 	migrations := RuntimeMigrations()
-	if len(migrations) != 41 {
-		t.Fatalf("RuntimeMigrations len = %d, want 41", len(migrations))
+	if len(migrations) != 42 {
+		t.Fatalf("RuntimeMigrations len = %d, want 42", len(migrations))
 	}
 	// Membership table of multi-instance deployments.
 	if migrations[31].Version != "202609250001_cluster_nodes" {
@@ -61,6 +61,17 @@ func TestRuntimeMigrationsCoverCoreTables(t *testing.T) {
 	if got := migrations[40]; got.Version != "202610130002_ccswitch_codex_context_window" ||
 		!strings.Contains(got.SQL, "ADD COLUMN IF NOT EXISTS codex_context_window") {
 		t.Fatalf("ccswitch context window migration = %q", got.Version)
+	}
+	// Access policies of accounts, keys and permission profiles: one additive
+	// column each, defaulting to the empty policy so no backfill is needed.
+	if got := migrations[41]; got.Version != "202610190001_access_policy" {
+		t.Fatalf("access policy migration = %q", got.Version)
+	} else {
+		for _, table := range []string{"end_users", "api_keys", "api_key_permission_profiles"} {
+			if !strings.Contains(got.SQL, "ALTER TABLE "+table+" ADD COLUMN IF NOT EXISTS access_policy TEXT NOT NULL DEFAULT '{}'") {
+				t.Fatalf("access policy migration does not add the column to %s", table)
+			}
+		}
 	}
 	// Appended from laterRuntimeMigrations() because migrations.go sits at its
 	// structure-gate size ceiling.

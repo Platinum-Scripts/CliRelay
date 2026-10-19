@@ -41,6 +41,9 @@ func laterRuntimeMigrations() []Migration {
 		{Version: "202610130001_platform_resource_grants", SQL: platformResourceGrantsSQL},
 		// Explicit Codex context window of a CC Switch import preset.
 		{Version: "202610130002_ccswitch_codex_context_window", SQL: ccSwitchCodexContextWindowSQL},
+		// Per-window request/token limits, per-model quota rules and model routes
+		// for accounts, keys and permission profiles. See access_policy_migrations.go.
+		{Version: "202610190001_access_policy", SQL: accessPolicySQL},
 	}
 }
 

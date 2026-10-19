@@ -17,36 +17,7 @@ import (
 
 func (s *Service) ManagementLogs(input ManagementLogQueryInput) (map[string]any, error) {
 	maps := s.buildNameMaps()
-	apiKeys := expandManagementAPIKeyFilters(s.tenantID, input.APIKeys)
-	authSubjectIDs, authIndexes, channelNames, authIndexChannelNames := channelFilterSelectors(
-		input.Channels,
-		maps.channelNameMap,
-		maps.authIndexChannelMap,
-		maps.ambiguousAuthIndexChannelMap,
-		maps.authMetaByIndex,
-		maps.authIndexGroup,
-		maps.authSubjectByIndex,
-		maps.authIndexesBySubject,
-		maps.authMetaBySubject,
-	)
-
-	params := usage.LogQueryParams{
-		TenantID:              s.tenantID,
-		Page:                  input.Page,
-		Size:                  input.Size,
-		Days:                  input.Days,
-		APIKeys:               apiKeys,
-		Models:                input.Models,
-		Statuses:              input.Statuses,
-		MatchNoAPIKeys:        input.MatchNoAPIKeys,
-		MatchNoModels:         input.MatchNoModels,
-		MatchNoStatuses:       input.MatchNoStatuses,
-		MatchNoChannels:       input.MatchNoChannels,
-		AuthSubjectIDs:        authSubjectIDs,
-		AuthIndexes:           authIndexes,
-		ChannelNames:          channelNames,
-		AuthIndexChannelNames: authIndexChannelNames,
-	}
+	params := s.managementLogParams(input, maps)
 
 	result, err := usage.QueryLogs(params)
 	if err != nil {

@@ -93,6 +93,7 @@ func (h *UsageLogsHandler) GetUsageLogs(c *gin.Context) {
 		Size:            intQueryDefault(c, "size", 50),
 		Days:            intQueryDefault(c, "days", 7),
 		APIKeys:         queryStringListMulti(c, "api_key", "api_keys"),
+		EndUserID:       strings.TrimSpace(c.Query("end_user_id")),
 		Models:          queryStringListMulti(c, "model", "models"),
 		Statuses:        queryStringListMulti(c, "status", "statuses"),
 		Channels:        deduped,
