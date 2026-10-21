@@ -33,6 +33,7 @@ type ConvertAnthropicResponseToOpenAIParams struct {
 type ToolCallAccumulator struct {
 	ID        string
 	Name      string
+	Streamed  bool
 	Arguments strings.Builder
 }
 
@@ -119,13 +120,21 @@ func ConvertClaudeResponseToOpenAI(_ context.Context, modelName string, original
 					state.ToolCallsAccumulator = make(map[int]*ToolCallAccumulator)
 				}
 
-				state.ToolCallsAccumulator[index] = &ToolCallAccumulator{
+				accumulator := &ToolCallAccumulator{
 					ID:   toolCallID,
 					Name: toolName,
 				}
+				state.ToolCallsAccumulator[index] = accumulator
+				if toolCallID == "" || toolName == "" {
+					return []string{}
+				}
+				accumulator.Streamed = true
 
-				// Don't output anything yet - wait for complete tool call
-				return []string{}
+				template, _ = sjson.Set(template, "choices.0.delta.tool_calls.0.index", index)
+				template, _ = sjson.Set(template, "choices.0.delta.tool_calls.0.id", toolCallID)
+				template, _ = sjson.Set(template, "choices.0.delta.tool_calls.0.type", "function")
+				template, _ = sjson.Set(template, "choices.0.delta.tool_calls.0.function.name", toolName)
+				return []string{template}
 			}
 		}
 		return []string{}
@@ -152,10 +161,14 @@ func ConvertClaudeResponseToOpenAI(_ context.Context, modelName string, original
 					if state.ToolCallsAccumulator != nil {
 						if accumulator, exists := state.ToolCallsAccumulator[index]; exists {
 							accumulator.Arguments.WriteString(partialJSON.String())
+							if accumulator.Streamed {
+								template, _ = sjson.Set(template, "choices.0.delta.tool_calls.0.index", index)
+								template, _ = sjson.Set(template, "choices.0.delta.tool_calls.0.function.arguments", partialJSON.String())
+								return []string{template}
+							}
 						}
 					}
 				}
-				// Don't output anything yet - wait for complete tool call
 				return []string{}
 			}
 		}
@@ -176,15 +189,22 @@ func ConvertClaudeResponseToOpenAI(_ context.Context, modelName string, original
 					arguments = "{}"
 				}
 				template, _ = sjson.Set(template, "choices.0.delta.tool_calls.0.index", index)
-				template, _ = sjson.Set(template, "choices.0.delta.tool_calls.0.id", accumulator.ID)
-				template, _ = sjson.Set(template, "choices.0.delta.tool_calls.0.type", "function")
-				template, _ = sjson.Set(template, "choices.0.delta.tool_calls.0.function.name", accumulator.Name)
-				template, _ = sjson.Set(template, "choices.0.delta.tool_calls.0.function.arguments", arguments)
+				if !accumulator.Streamed {
+					template, _ = sjson.Set(template, "choices.0.delta.tool_calls.0.id", accumulator.ID)
+					template, _ = sjson.Set(template, "choices.0.delta.tool_calls.0.type", "function")
+					template, _ = sjson.Set(template, "choices.0.delta.tool_calls.0.function.name", accumulator.Name)
+					template, _ = sjson.Set(template, "choices.0.delta.tool_calls.0.function.arguments", arguments)
+				} else if accumulator.Arguments.Len() == 0 {
+					template, _ = sjson.Set(template, "choices.0.delta.tool_calls.0.function.arguments", arguments)
+				}
 
 				// Clean up the accumulator for this index
 				delete(state.ToolCallsAccumulator, index)
 
-				return []string{template}
+				if !accumulator.Streamed || accumulator.Arguments.Len() == 0 {
+					return []string{template}
+				}
+				return []string{}
 			}
 		}
 		return []string{}
