@@ -2,7 +2,7 @@ module github.com/router-for-me/CLIProxyAPI/v6
 
 go 1.26.0
 
-toolchain go1.26.9
+toolchain go1.26.10
 
 require (
 	clirelay.local/updater v0.0.0-00010101000000-000000000000
