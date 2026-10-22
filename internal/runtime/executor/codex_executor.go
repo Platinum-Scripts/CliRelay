@@ -172,6 +172,7 @@ func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
 	}
 	httpReq = httpReq.WithContext(withCodexRequestModel(httpReq.Context(), firstNonEmptyString(req.Model, execCtx.BaseModel)))
 	applyCodexHeaders(httpReq, e.cfg, auth, apiKey, true)
+	applyCodexServiceTierRoutingHint(httpReq.Header, body, auth)
 	recorder := execCtx.Recorder()
 	recorder.RecordRequest(url, http.MethodPost, httpReq.Header.Clone(), body)
 	httpClient := execCtx.HTTPClient(0)
@@ -387,6 +388,7 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 	}
 	httpReq = httpReq.WithContext(withCodexRequestModel(httpReq.Context(), firstNonEmptyString(req.Model, execCtx.BaseModel)))
 	applyCodexHeaders(httpReq, e.cfg, auth, apiKey, true)
+	applyCodexServiceTierRoutingHint(httpReq.Header, body, auth)
 	recorder := execCtx.Recorder()
 	recorder.RecordRequest(url, http.MethodPost, httpReq.Header.Clone(), body)
 	httpClient := execCtx.HTTPClient(0)

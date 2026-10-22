@@ -37,7 +37,7 @@ type FieldPatch struct {
 	ConcurrencyLimit *int `json:"concurrency_limit"`
 	// CodexConvergenceMode overrides the global identity fingerprint convergence mode for Codex accounts (off, device, session, full, or empty to inherit).
 	CodexConvergenceMode *string `json:"codex_convergence_mode"`
-	// CodexServiceTier sets how service_tier (Fast/Priority/Flex) is handled for this account: "pass", "priority", "flex", "drop", or empty/default to inherit.
+	// CodexServiceTier controls service_tier: "pass", "priority", "ultrafast", "flex", "drop", or empty/default for standard mode.
 	CodexServiceTier *string `json:"codex_service_tier"`
 }
 

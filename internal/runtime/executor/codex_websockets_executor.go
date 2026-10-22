@@ -131,6 +131,7 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
 
 	body, wsHeaders := applyCodexPromptCacheHeaders(auth, execCtx.SourceFormat, req, body, execCtx.Options)
 	wsHeaders = applyCodexWebsocketHeaders(execCtx.Context, wsHeaders, e.cfg, auth, apiKey)
+	applyCodexServiceTierRoutingHint(wsHeaders, body, auth)
 	recorder := execCtx.Recorder()
 
 	var authID string
@@ -328,6 +329,7 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *clipr
 
 	body, wsHeaders := applyCodexPromptCacheHeaders(auth, execCtx.SourceFormat, req, body, execCtx.Options)
 	wsHeaders = applyCodexWebsocketHeaders(execCtx.Context, wsHeaders, e.cfg, auth, apiKey)
+	applyCodexServiceTierRoutingHint(wsHeaders, body, auth)
 	recorder := execCtx.Recorder()
 
 	var authID string
