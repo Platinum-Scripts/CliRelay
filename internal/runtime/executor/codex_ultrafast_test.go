@@ -154,8 +154,10 @@ func TestCodexServiceTierRoutingHintBoundaries(t *testing.T) {
 			if got := headers.Get("X-Codex-Routing-Hint"); got != tc.want {
 				t.Fatalf("hint = %q, want %q", got, tc.want)
 			}
-			if _, exists := headers["x-codex-routing-hint"]; exists {
-				t.Fatal("raw lowercase hint must be removed")
+			for key := range headers {
+				if key == "x-codex-routing-hint" {
+					t.Fatal("raw lowercase hint must be removed")
+				}
 			}
 		})
 	}
