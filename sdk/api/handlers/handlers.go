@@ -59,6 +59,7 @@ const (
 )
 
 type pinnedAuthContextKey struct{}
+type allowedAuthIDsContextKey struct{}
 type selectedAuthCallbackContextKey struct{}
 type executionSessionContextKey struct{}
 
@@ -113,6 +114,24 @@ func WithPinnedAuthID(ctx context.Context, authID string) context.Context {
 		ctx = context.Background()
 	}
 	return context.WithValue(ctx, pinnedAuthContextKey{}, authID)
+}
+
+// WithAllowedAuthIDs returns a child context that restricts credential
+// selection to exactly the given auth IDs. The restriction fails closed: an
+// empty (or nil) list leaves no credential eligible. Blank IDs are dropped. It
+// is meant for trusted server-side code (custom middleware or an embedding
+// application), never for values copied from an untrusted client.
+func WithAllowedAuthIDs(ctx context.Context, authIDs []string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ids := make([]string, 0, len(authIDs))
+	for _, id := range authIDs {
+		if id = strings.TrimSpace(id); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return context.WithValue(ctx, allowedAuthIDsContextKey{}, ids)
 }
 
 // WithSelectedAuthIDCallback returns a child context that receives the selected auth ID.
@@ -305,6 +324,9 @@ func requestExecutionMetadata(ctx context.Context) map[string]any {
 	if pinnedAuthID := pinnedAuthIDFromContext(ctx); pinnedAuthID != "" {
 		meta[coreexecutor.PinnedAuthMetadataKey] = pinnedAuthID
 	}
+	if allowedAuthIDs, ok := allowedAuthIDsFromContext(ctx); ok {
+		meta[coreexecutor.AllowedAuthIDsMetadataKey] = allowedAuthIDs
+	}
 	if selectedCallback := selectedAuthIDCallbackFromContext(ctx); selectedCallback != nil {
 		meta[coreexecutor.SelectedAuthCallbackMetadataKey] = selectedCallback
 	}
@@ -330,6 +352,19 @@ func pinnedAuthIDFromContext(ctx context.Context) string {
 	default:
 		return ""
 	}
+}
+
+// allowedAuthIDsFromContext returns a copy of the strict auth allowlist and
+// whether one was set; an empty list with ok=true means "nothing eligible".
+func allowedAuthIDsFromContext(ctx context.Context) ([]string, bool) {
+	if ctx == nil {
+		return nil, false
+	}
+	ids, ok := ctx.Value(allowedAuthIDsContextKey{}).([]string)
+	if !ok {
+		return nil, false
+	}
+	return append([]string{}, ids...), true
 }
 
 func selectedAuthIDCallbackFromContext(ctx context.Context) func(string) {
