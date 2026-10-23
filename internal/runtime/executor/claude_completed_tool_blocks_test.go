@@ -45,7 +45,7 @@ func TestNegotiatedClaudeBlockCompletion(t *testing.T) {
 		}
 		if enabled {
 			call := gjson.Get(chunks[1], "choices.0.delta.tool_calls.0")
-			if call.Get("index").Int() != 2 || call.Get("id").String() != "call_fixture" || call.Get("x_opencodex_completed").String() != sdktranslator.CompletedToolBlocksVersion || call.Get("function").Exists() {
+			if call.Get("index").Int() != 2 || call.Get("id").String() != "call_fixture" || call.Get("x_tool_completed").String() != sdktranslator.CompletedToolBlocksVersion || call.Get("function").Exists() {
 				t.Fatal("marker did not bind exact completed call")
 			}
 			if gjson.Get(chunks[1], "id").String() != gjson.Get(chunks[0], "id").String() || gjson.Get(chunks[1], "created").Int() != gjson.Get(chunks[0], "created").Int() {

@@ -68,7 +68,7 @@ func TestClaudeCompletedToolBlocksPreserveRequestAndReleaseBeforeProviderTermina
 				t.Error(chunk.Err)
 				break
 			}
-			if strings.Contains(string(chunk.Payload), "x_opencodex_completed") {
+			if strings.Contains(string(chunk.Payload), "x_tool_completed") {
 				if !enabled || markerSeen {
 					t.Error("unexpected duplicate or unnegotiated marker")
 				}

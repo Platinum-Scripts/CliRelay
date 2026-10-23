@@ -46,7 +46,7 @@ func appendClaudeCompletedToolBlockMarkers(chunks []string, index int64) []strin
 			continue
 		}
 		marker, err := sjson.Set(chunks[i], "choices.0.delta", map[string]any{
-			"tool_calls": []map[string]any{{"index": index, "id": call.Get("id").String(), "x_opencodex_completed": sdktranslator.CompletedToolBlocksVersion}},
+			"tool_calls": []map[string]any{{"index": index, "id": call.Get("id").String(), "x_tool_completed": sdktranslator.CompletedToolBlocksVersion}},
 		})
 		if err != nil {
 			continue
