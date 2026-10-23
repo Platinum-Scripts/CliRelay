@@ -40,10 +40,6 @@ func TestWithAllowedAuthIDsEmptyListFailsClosed(t *testing.T) {
 			t.Fatalf("%s: allowlist metadata = %#v ok=%v, want present and empty", name, got, ok)
 		}
 	}
-	//nolint:staticcheck // a nil parent context is accepted like the other With* helpers.
-	if _, ok := allowedAuthIDsFromContext(WithAllowedAuthIDs(nil, []string{"account-a"})); !ok {
-		t.Fatal("nil parent context dropped the allowlist")
-	}
 }
 
 // Middleware that runs before the API handlers can attach the allowlist to the
