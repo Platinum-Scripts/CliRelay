@@ -435,7 +435,7 @@ func (s *Server) handleChatGPTLiveOffer(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"message": err.Error(), "type": "bad_gateway"}})
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	respBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	location := strings.TrimSpace(resp.Header.Get("Location"))
@@ -595,6 +595,9 @@ func (s *Server) bridgeWebSocket(c *gin.Context, upstreamURL string, headers htt
 		WriteBufferSize:  32 * 1024,
 	}
 	upstreamConn, resp, err := dialer.DialContext(c.Request.Context(), upstreamURL, headers)
+	if resp != nil && resp.Body != nil {
+		defer func() { _ = resp.Body.Close() }()
+	}
 	if err != nil {
 		status := http.StatusBadGateway
 		msg := err.Error()
@@ -602,21 +605,22 @@ func (s *Server) bridgeWebSocket(c *gin.Context, upstreamURL string, headers htt
 			if resp.StatusCode > 0 {
 				status = resp.StatusCode
 			}
-			if body, readErr := io.ReadAll(io.LimitReader(resp.Body, 4096)); readErr == nil && len(body) > 0 {
-				msg = strings.TrimSpace(string(body))
+			if resp.Body != nil {
+				if body, readErr := io.ReadAll(io.LimitReader(resp.Body, 4096)); readErr == nil && len(body) > 0 {
+					msg = strings.TrimSpace(string(body))
+				}
 			}
-			_ = resp.Body.Close()
 		}
 		c.JSON(status, gin.H{"error": gin.H{"message": msg, "type": "upstream_websocket_error"}})
 		return
 	}
-	defer upstreamConn.Close()
+	defer func() { _ = upstreamConn.Close() }()
 
 	clientConn, err := voiceUpgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		return
 	}
-	defer clientConn.Close()
+	defer func() { _ = clientConn.Close() }()
 
 	errCh := make(chan error, 2)
 	pump := func(dst, src *websocket.Conn) {

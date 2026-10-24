@@ -14,8 +14,8 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v6/sdk/access"
-	sdkConfig "github.com/router-for-me/CLIProxyAPI/v6/sdk/config"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
+	sdkConfig "github.com/router-for-me/CLIProxyAPI/v6/sdk/config"
 )
 
 func newVoiceTestServer(t *testing.T, authEntries ...*cliproxyauth.Auth) *Server {
@@ -56,7 +56,7 @@ func TestGrokVoiceSessionAndWebsocketRelay(t *testing.T) {
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		for {
 			mt, msg, readErr := conn.ReadMessage()
 			if readErr != nil {
@@ -104,11 +104,14 @@ func TestGrokVoiceSessionAndWebsocketRelay(t *testing.T) {
 
 	wsURL := "ws" + strings.TrimPrefix(gatewayHTTP.URL, "http") + "/v1/voice/grok?voice=rex"
 	headers := http.Header{"Authorization": []string{"Bearer test-client-key"}}
-	clientConn, _, err := websocket.DefaultDialer.Dial(wsURL, headers)
+	clientConn, wsResp, err := websocket.DefaultDialer.Dial(wsURL, headers)
+	if wsResp != nil && wsResp.Body != nil {
+		defer func() { _ = wsResp.Body.Close() }()
+	}
 	if err != nil {
 		t.Fatalf("dial /v1/voice/grok: %v", err)
 	}
-	defer clientConn.Close()
+	defer func() { _ = clientConn.Close() }()
 
 	if err := clientConn.WriteMessage(websocket.TextMessage, []byte("hello-grok")); err != nil {
 		t.Fatalf("write message: %v", err)
@@ -149,7 +152,7 @@ func TestClaudeVoiceSessionAndSTTWebsocketRelay(t *testing.T) {
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		for {
 			mt, msg, readErr := conn.ReadMessage()
 			if readErr != nil {
@@ -207,11 +210,14 @@ func TestClaudeVoiceSessionAndSTTWebsocketRelay(t *testing.T) {
 	wsURL := "ws" + strings.TrimPrefix(gatewayHTTP.URL, "http") +
 		"/api/ws/speech_to_text/voice_stream?encoding=linear16&sample_rate=16000&keyterms=CliRelay&keyterms=useEffect"
 	headers := http.Header{"Authorization": []string{"Bearer test-client-key"}}
-	clientConn, _, err := websocket.DefaultDialer.Dial(wsURL, headers)
+	clientConn, wsResp, err := websocket.DefaultDialer.Dial(wsURL, headers)
+	if wsResp != nil && wsResp.Body != nil {
+		defer func() { _ = wsResp.Body.Close() }()
+	}
 	if err != nil {
 		t.Fatalf("dial /api/ws/speech_to_text/voice_stream: %v", err)
 	}
-	defer clientConn.Close()
+	defer func() { _ = clientConn.Close() }()
 
 	if err := clientConn.WriteMessage(websocket.BinaryMessage, []byte{0x01, 0x02, 0x03, 0x04}); err != nil {
 		t.Fatalf("write binary audio: %v", err)
@@ -267,7 +273,7 @@ func TestChatGPTLiveOfferAndSidebandWebsocketRelay(t *testing.T) {
 			if err != nil {
 				return
 			}
-			defer conn.Close()
+			defer func() { _ = conn.Close() }()
 			for {
 				mt, msg, readErr := conn.ReadMessage()
 				if readErr != nil {
@@ -318,11 +324,14 @@ func TestChatGPTLiveOfferAndSidebandWebsocketRelay(t *testing.T) {
 
 	wsURL := "ws" + strings.TrimPrefix(gatewayHTTP.URL, "http") + "/v1/live/rtc_call_999"
 	headers := http.Header{"Authorization": []string{"Bearer test-client-key"}}
-	sidebandConn, _, err := websocket.DefaultDialer.Dial(wsURL, headers)
+	sidebandConn, wsResp, err := websocket.DefaultDialer.Dial(wsURL, headers)
+	if wsResp != nil && wsResp.Body != nil {
+		defer func() { _ = wsResp.Body.Close() }()
+	}
 	if err != nil {
 		t.Fatalf("dial /v1/live/rtc_call_999: %v", err)
 	}
-	defer sidebandConn.Close()
+	defer func() { _ = sidebandConn.Close() }()
 
 	if err := sidebandConn.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.create"}`)); err != nil {
 		t.Fatalf("write sideband message: %v", err)
